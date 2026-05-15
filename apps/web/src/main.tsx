@@ -527,29 +527,7 @@ function App() {
         </div>
         <nav>
           <div className="nav-group">
-            <button className="nav-item active"><MessageSquare size={17} /> Chat</button>
-            <div className="nav-subtree">
-              {selectedRepo ? (
-                <>
-                  <form className="nav-new-chat" onSubmit={createChat}>
-                    <input placeholder="New chat title" value={chatTitle} onChange={(event) => setChatTitle(event.target.value)} />
-                    <button disabled={busy || !chatTitle.trim()}><Plus size={14} /></button>
-                  </form>
-                  {chats.map((chat) => (
-                    <button className={activeChatId === chat.id ? "nav-leaf active" : "nav-leaf"} key={chat.id} onClick={() => loadChat(chat.id)}>
-                      <span>{chat.title}</span>
-                      <small>{new Date(chat.updatedAt).toLocaleString()}</small>
-                    </button>
-                  ))}
-                  {!chats.length && <span className="nav-empty">No chats yet</span>}
-                </>
-              ) : (
-                <span className="nav-empty">Choose a project</span>
-              )}
-            </div>
-          </div>
-          <div className="nav-group">
-            <button className="nav-item" onClick={clearProjectSelection}><FolderGit2 size={17} /> Projects</button>
+            <button className="nav-item active" onClick={clearProjectSelection}><FolderGit2 size={17} /> Projects</button>
             <div className="nav-subtree">
               {repos.map((repo) => {
                 const selected = selectedRepo?.agentId === repo.agentId && selectedRepo.id === repo.id;
@@ -561,9 +539,14 @@ function App() {
                     </button>
                     {selected && (
                       <div className="nav-project-chats">
+                        <form className="nav-new-chat" onSubmit={createChat}>
+                          <input placeholder="New chat title" value={chatTitle} onChange={(event) => setChatTitle(event.target.value)} />
+                          <button disabled={busy || !chatTitle.trim()}><Plus size={14} /></button>
+                        </form>
                         {chats.map((chat) => (
                           <button className={activeChatId === chat.id ? "nav-leaf chat-child active" : "nav-leaf chat-child"} key={chat.id} onClick={() => loadChat(chat.id)}>
                             <span>{chat.title}</span>
+                            <small>{new Date(chat.updatedAt).toLocaleString()}</small>
                           </button>
                         ))}
                         {!chats.length && <span className="nav-empty inset">No chats</span>}
