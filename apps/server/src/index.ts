@@ -178,6 +178,25 @@ function appendChatMessage(message: Omit<ChatMessageRow, "id"> & { id?: string }
   broadcast({ type: "chats.updated", agentId: chatAgentId(message.chat_id), repoId: chatRepoId(message.chat_id) });
 }
 
+function clearOrphanedAgentJobs(agentId: string, currentJobId: string | undefined): void {
+  if (currentJobId) return;
+  const rows = db.prepare("SELECT id FROM jobs WHERE agent_id = ? AND status IN ('assigned','running')")
+    .all(agentId) as Array<{ id: string }>;
+  if (!rows.length) return;
+  const stamp = nowIso();
+  db.prepare("UPDATE jobs SET status='agent_disconnected', finished_at=? WHERE agent_id=? AND status IN ('assigned','running')")
+    .run(stamp, agentId);
+  for (const row of rows) {
+    appendLog({
+      job_id: row.id,
+      stream: "system",
+      message: "Agent heartbeat has no active job; marking stale job as disconnected.",
+      at: stamp
+    });
+    broadcast({ type: "job.updated", jobId: row.id, status: "agent_disconnected" });
+  }
+}
+
 function chatAgentId(chatId: string): string {
   const row = db.prepare("SELECT agent_id FROM chats WHERE id = ?").get(chatId) as { agent_id: string } | undefined;
   return row?.agent_id ?? "";
@@ -621,6 +640,8 @@ async function createApp(): Promise<FastifyInstance> {
       if (parsed.type === "agent.heartbeat") {
         db.prepare("UPDATE agents SET last_seen_at=?, current_job_id=? WHERE id=?").run(nowIso(), parsed.currentJobId ?? null, agent.id);
         if (parsed.repos) upsertRepos(agent.id, parsed.repos);
+        clearOrphanedAgentJobs(agent.id, parsed.currentJobId);
+        dispatchQueue(agent.id);
       }
       if (parsed.type === "job.log") {
         db.prepare("UPDATE jobs SET status='running', started_at=COALESCE(started_at, ?) WHERE id=?").run(nowIso(), parsed.jobId);
