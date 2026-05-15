@@ -3,8 +3,8 @@
   "short_name": "Codex Control",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#101820",
-  "theme_color": "#101820",
+  "background_color": "#f7f7f8",
+  "theme_color": "#f7f7f8",
   "icons": [
     {
       "src": "/icons/icon-192.svg",

@@ -1,8 +1,8 @@
 :root {
-  color-scheme: dark;
+  color-scheme: light;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  background: #101820;
-  color: #f7f5ef;
+  background: #f7f7f8;
+  color: #202123;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
 }
@@ -15,7 +15,7 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
-  background: #101820;
+  background: #f7f7f8;
 }
 
 button,
@@ -35,7 +35,7 @@ button {
   display: grid;
   place-items: center;
   padding: 24px;
-  background: linear-gradient(140deg, #101820 0%, #19323c 48%, #0f2f2f 100%);
+  background: #f7f7f8;
 }
 
 .login-panel {
@@ -43,10 +43,10 @@ button {
   display: grid;
   gap: 16px;
   padding: 24px;
-  border: 1px solid rgba(247, 245, 239, 0.12);
+  border: 1px solid #d9d9e3;
   border-radius: 8px;
-  background: rgba(16, 24, 32, 0.82);
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.34);
+  background: #ffffff;
+  box-shadow: 0 18px 55px rgba(32, 33, 35, 0.08);
 }
 
 .brand-mark {
@@ -55,8 +55,8 @@ button {
   display: grid;
   place-items: center;
   border-radius: 8px;
-  color: #101820;
-  background: #f2c14e;
+  color: #ffffff;
+  background: #10a37f;
 }
 
 .login h1,
@@ -68,7 +68,7 @@ button {
 
 .login p {
   margin: -8px 0 8px;
-  color: #b7c7c9;
+  color: #6e6e80;
 }
 
 .login form,
@@ -81,9 +81,9 @@ input,
 select,
 textarea {
   width: 100%;
-  color: #f7f5ef;
-  background: #18242d;
-  border: 1px solid #334853;
+  color: #202123;
+  background: #ffffff;
+  border: 1px solid #d9d9e3;
   border-radius: 8px;
   padding: 14px 15px;
   outline: none;
@@ -98,8 +98,8 @@ textarea {
 input:focus,
 select:focus,
 textarea:focus {
-  border-color: #f2c14e;
-  box-shadow: 0 0 0 3px rgba(242, 193, 78, 0.18);
+  border-color: #10a37f;
+  box-shadow: 0 0 0 3px rgba(16, 163, 127, 0.16);
 }
 
 .login button,
@@ -109,10 +109,11 @@ textarea:focus {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  color: #101820;
-  background: #f2c14e;
+  color: #ffffff;
+  background: #10a37f;
   border-radius: 8px;
   font-weight: 800;
+  box-shadow: 0 8px 18px rgba(16, 163, 127, 0.18);
 }
 
 .shell {
@@ -143,13 +144,13 @@ textarea:focus {
 }
 
 .status.ok {
-  background: rgba(52, 211, 153, 0.16);
-  color: #7ee4bd;
+  background: #e7f6f1;
+  color: #08785f;
 }
 
 .status.bad {
-  background: rgba(248, 113, 113, 0.16);
-  color: #ff9b9b;
+  background: #fff1f2;
+  color: #b42318;
 }
 
 .top-actions {
@@ -163,9 +164,10 @@ textarea:focus {
   display: grid;
   place-items: center;
   border-radius: 8px;
-  color: #f7f5ef;
-  background: #1b2a34;
-  border: 1px solid #304652;
+  color: #353740;
+  background: #ffffff;
+  border: 1px solid #d9d9e3;
+  box-shadow: 0 1px 2px rgba(32, 33, 35, 0.04);
 }
 
 .machine-strip {
@@ -179,28 +181,30 @@ textarea:focus {
   display: grid;
   gap: 4px;
   padding: 14px;
-  border: 1px solid #2d434e;
+  border: 1px solid #d9d9e3;
   border-radius: 8px;
-  background: #16242d;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(32, 33, 35, 0.04);
 }
 
 .machine span,
 .machine small,
 .repo-meta {
-  color: #b7c7c9;
+  color: #6e6e80;
 }
 
 .composer {
   padding: 14px;
   border-radius: 8px;
-  background: #13212a;
-  border: 1px solid #2d434e;
+  background: #ffffff;
+  border: 1px solid #d9d9e3;
+  box-shadow: 0 1px 2px rgba(32, 33, 35, 0.04);
 }
 
 label {
   display: grid;
   gap: 7px;
-  color: #dbe7e7;
+  color: #353740;
   font-size: 13px;
   font-weight: 700;
 }
@@ -226,9 +230,9 @@ label {
 .chips button {
   white-space: nowrap;
   border-radius: 999px;
-  color: #dbe7e7;
-  background: #1d303a;
-  border: 1px solid #35515d;
+  color: #353740;
+  background: #f7f7f8;
+  border: 1px solid #d9d9e3;
 }
 
 .segments button {
@@ -237,14 +241,20 @@ label {
 }
 
 .segments .active {
-  color: #101820;
-  background: #89d2dc;
-  border-color: #89d2dc;
+  color: #ffffff;
+  background: #10a37f;
+  border-color: #10a37f;
 }
 
 .chips button {
   padding: 8px 11px;
   font-size: 13px;
+}
+
+.chips button:hover,
+.icon:hover,
+.job:hover {
+  background: #f1f1f3;
 }
 
 .sticky-submit {
@@ -258,8 +268,9 @@ label {
 
 .sticky-submit .stop {
   min-width: 104px;
-  color: #fff1f1;
-  background: #b63f3f;
+  color: #ffffff;
+  background: #d92d20;
+  box-shadow: 0 8px 18px rgba(217, 45, 32, 0.16);
 }
 
 .workspace {
@@ -291,14 +302,16 @@ h2 {
   width: 100%;
   padding: 12px;
   text-align: left;
-  color: #f7f5ef;
-  background: #16242d;
-  border: 1px solid #2d434e;
+  color: #202123;
+  background: #ffffff;
+  border: 1px solid #d9d9e3;
   border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(32, 33, 35, 0.04);
 }
 
 .job.active {
-  border-color: #f2c14e;
+  border-color: #10a37f;
+  box-shadow: 0 0 0 3px rgba(16, 163, 127, 0.12);
 }
 
 .job span {
@@ -306,16 +319,17 @@ h2 {
 }
 
 .job small {
-  color: #9db0b4;
+  color: #6e6e80;
 }
 
 .job-head {
   display: grid;
   gap: 8px;
   padding: 14px;
-  border: 1px solid #2d434e;
+  border: 1px solid #d9d9e3;
   border-radius: 8px;
-  background: #13212a;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(32, 33, 35, 0.04);
 }
 
 .pill {
@@ -325,21 +339,21 @@ h2 {
   gap: 6px;
   padding: 5px 8px;
   border-radius: 999px;
-  background: #273b45;
-  color: #dbe7e7;
+  background: #f1f1f3;
+  color: #353740;
   font-size: 12px;
   font-weight: 800;
 }
 
 .pill.completed {
-  color: #7ee4bd;
-  background: rgba(52, 211, 153, 0.14);
+  color: #08785f;
+  background: #e7f6f1;
 }
 
 .pill.failed,
 .pill.cancelled {
-  color: #ff9b9b;
-  background: rgba(248, 113, 113, 0.14);
+  color: #b42318;
+  background: #fff1f2;
 }
 
 pre {
@@ -355,20 +369,30 @@ pre {
   width: 100%;
   padding: 14px;
   border-radius: 8px;
-  color: #dbe7e7;
-  background: #0b1218;
-  border: 1px solid #253b46;
+  color: #202123;
+  background: #ffffff;
+  border: 1px solid #d9d9e3;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.5);
 }
 
 .logs {
   min-height: 260px;
   max-height: 48vh;
   overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+  background: #fcfcfd;
 }
 
 .results {
   display: grid;
   gap: 10px;
+}
+
+.results pre {
+  background: #fcfcfd;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
 }
 
 button:disabled {
