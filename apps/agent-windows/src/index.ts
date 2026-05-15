@@ -4,6 +4,7 @@ import WebSocket from "ws";
 import { ServerToAgentSchema, type AgentToServer, type ServerToAgent } from "@cmc/protocol";
 import { loadAgentConfig, saveAgentConfig } from "./config.js";
 import { Runner } from "./codex-runner.js";
+import { syncLocalChats } from "./local-chat-sync.js";
 import { runCapture } from "./process-utils.js";
 import { makeRedactor } from "./redact.js";
 import { scanRepos } from "./repo-scanner.js";
@@ -150,6 +151,7 @@ function connect() {
     for (const delay of [250, 1000, 3000]) {
       setTimeout(async () => send(await hello()), delay);
     }
+    setTimeout(() => syncLocalChats(config, send).catch((error) => console.error(`Local chat sync failed: ${error.message}`)), 5000);
   });
 
   ws.on("message", async (raw) => {
@@ -277,9 +279,14 @@ function connect() {
     if (ws.readyState !== WebSocket.OPEN) return;
     send({ type: "agent.heartbeat", currentJobId, repos: await scanRepos(config) });
   }, config.heartbeatIntervalMs);
+  const chatSync = setInterval(async () => {
+    if (ws.readyState !== WebSocket.OPEN) return;
+    await syncLocalChats(config, send).catch((error) => console.error(`Local chat sync failed: ${error.message}`));
+  }, Math.max(config.heartbeatIntervalMs * 3, 60000));
 
   ws.on("close", () => {
     clearInterval(heartbeat);
+    clearInterval(chatSync);
     console.log("Disconnected. Reconnecting soon...");
     setTimeout(connect, 3000);
   });

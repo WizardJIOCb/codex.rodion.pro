@@ -77,7 +77,8 @@ export const AgentJobDoneSchema = z.object({
   gitStatus: z.string().optional(),
   gitDiffStat: z.string().optional(),
   gitDiff: z.string().optional(),
-  branchName: z.string().optional()
+  branchName: z.string().optional(),
+  codexThreadId: z.string().optional()
 });
 
 export const AgentProjectResultSchema = z.object({
@@ -98,6 +99,28 @@ export const AgentGitResultSchema = z.object({
   repos: z.array(RepoInfoSchema).optional()
 });
 
+export const ChatMessageSchema = z.object({
+  id: z.string().optional(),
+  role: z.enum(["user", "assistant", "system", "tool"]),
+  content: z.string().min(1).max(200000),
+  source: z.string().min(1).max(40).default("web"),
+  externalId: z.string().max(300).optional(),
+  createdAt: z.string().datetime(),
+  metadata: z.record(z.unknown()).optional()
+});
+export type ChatMessage = z.infer<typeof ChatMessageSchema>;
+
+export const AgentChatSyncSchema = z.object({
+  type: z.literal("chat.sync"),
+  repoId: z.string().min(1),
+  source: z.enum(["codex", "vscode"]),
+  externalId: z.string().min(1).max(300),
+  title: z.string().min(1).max(300),
+  cwd: z.string().max(260).optional(),
+  updatedAt: z.string().datetime(),
+  messages: z.array(ChatMessageSchema).max(200)
+});
+
 export const AgentToServerSchema = z.discriminatedUnion("type", [
   AgentHelloSchema,
   AgentHeartbeatSchema,
@@ -105,7 +128,8 @@ export const AgentToServerSchema = z.discriminatedUnion("type", [
   AgentJobProgressSchema,
   AgentJobDoneSchema,
   AgentProjectResultSchema,
-  AgentGitResultSchema
+  AgentGitResultSchema,
+  AgentChatSyncSchema
 ]);
 export type AgentToServer = z.infer<typeof AgentToServerSchema>;
 

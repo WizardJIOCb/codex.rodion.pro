@@ -98,6 +98,7 @@ export class Runner {
       });
       this.child.stdin.end();
       let finalMessage = "";
+      let codexThreadId: string | undefined;
       let progressBusy = false;
       const timer = setTimeout(() => {
         this.cancelled = true;
@@ -117,7 +118,14 @@ export class Runner {
         const text = chunk.toString();
         finalMessage = text.slice(-4000);
         for (const line of text.split(/\r?\n/).filter(Boolean)) {
-          if (stream === "stdout" && handleCodexJsonLine(context, line)) continue;
+          if (stream === "stdout") {
+            const handled = handleCodexJsonLine(context, line);
+            if (handled.handled) {
+              if (handled.threadId) codexThreadId = handled.threadId;
+              if (handled.messageText) finalMessage = handled.messageText.slice(-4000);
+              continue;
+            }
+          }
           context.sendLog(log(context.job.id, stream, line));
           if (stream === "stderr") context.sendProgress(progress(context.job.id, "message", line.slice(0, 500)));
         }
@@ -155,7 +163,8 @@ export class Runner {
           finalMessage: finalMessage || (exitCode === 0 ? "Completed." : "Process failed."),
           gitStatus: gitStatus.stdout,
           gitDiffStat: gitDiffStat.stdout,
-          gitDiff: truncate(gitDiff.stdout, 120000)
+          gitDiff: truncate(gitDiff.stdout, 120000),
+          codexThreadId
         });
       });
     });
@@ -191,31 +200,32 @@ async function diffProgress(repoPath: string): Promise<{ filesChanged: number; a
   return { filesChanged, added, deleted };
 }
 
-function handleCodexJsonLine(context: RunContext, line: string): boolean {
+function handleCodexJsonLine(context: RunContext, line: string): { handled: boolean; threadId?: string; messageText?: string } {
   let event: unknown;
   try {
     event = JSON.parse(line);
   } catch {
-    return false;
+    return { handled: false };
   }
-  if (!event || typeof event !== "object") return false;
+  if (!event || typeof event !== "object") return { handled: false };
   const item = "item" in event && event.item && typeof event.item === "object" ? event.item as Record<string, unknown> : undefined;
   const type = "type" in event ? String(event.type) : "";
 
   if (type === "thread.started") {
     context.sendProgress(progress(context.job.id, "started", "Codex thread started."));
-    return true;
+    const threadId = "thread_id" in event && typeof event.thread_id === "string" ? event.thread_id : undefined;
+    return { handled: true, threadId };
   }
   if (type === "turn.started") {
     context.sendProgress(progress(context.job.id, "thinking", "Codex is thinking."));
-    return true;
+    return { handled: true };
   }
   if (type === "item.started" && item?.type === "command_execution") {
     const command = typeof item.command === "string" ? item.command : "command";
     const summary = summarizeCommand(command);
     context.sendProgress(progress(context.job.id, "command", `Running: ${summary}`));
     context.sendLog(log(context.job.id, "system", `Running: ${summary}`));
-    return true;
+    return { handled: true };
   }
   if (type === "item.completed" && item?.type === "agent_message") {
     const text = typeof item.text === "string" ? item.text.trim() : "";
@@ -223,7 +233,7 @@ function handleCodexJsonLine(context: RunContext, line: string): boolean {
       context.sendProgress(progress(context.job.id, "message", text.slice(0, 500)));
       context.sendLog(log(context.job.id, "stdout", text));
     }
-    return true;
+    return { handled: true, messageText: text };
   }
   if (type === "item.completed" && item?.type === "command_execution") {
     const status = typeof item.status === "string" ? item.status : "completed";
@@ -232,10 +242,10 @@ function handleCodexJsonLine(context: RunContext, line: string): boolean {
     context.sendProgress(progress(context.job.id, "command", `${command}: ${status}.`));
     context.sendLog(log(context.job.id, status === "failed" ? "stderr" : "system", `${command}: ${status}.`));
     if (output) context.sendLog(log(context.job.id, status === "failed" ? "stderr" : "stdout", output.slice(0, 4000)));
-    return true;
+    return { handled: true };
   }
 
-  return true;
+  return { handled: true };
 }
 
 function summarizeCommand(command: string): string {

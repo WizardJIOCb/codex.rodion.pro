@@ -554,6 +554,100 @@ h2 {
   box-shadow: 0 1px 2px rgba(32, 33, 35, 0.04);
 }
 
+.chat-thread {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #d9d9e3;
+  border-radius: 6px;
+  background: #fcfcfd;
+}
+
+.message {
+  display: grid;
+  gap: 6px;
+  max-width: min(720px, 100%);
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #d9d9e3;
+  background: #ffffff;
+}
+
+.message.user {
+  justify-self: end;
+  background: #f1f1f3;
+}
+
+.message.assistant,
+.message.tool,
+.message.system {
+  justify-self: start;
+}
+
+.message-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #6e6e80;
+  font-size: 12px;
+}
+
+.message-meta span {
+  color: #353740;
+  font-weight: 800;
+}
+
+.message p {
+  margin: 0;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.edited-card {
+  display: grid;
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid #d9d9e3;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.edited-head,
+.edited-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  min-width: 0;
+  padding: 10px 12px;
+}
+
+.edited-head {
+  background: #f7f7f8;
+}
+
+.edited-head span {
+  color: #08785f;
+  font-weight: 800;
+}
+
+.edited-row {
+  border-top: 1px solid #ececf1;
+}
+
+.edited-row span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.edited-row small {
+  color: #6e6e80;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+
 .progress-panel {
   display: flex;
   align-items: center;

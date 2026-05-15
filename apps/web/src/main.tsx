@@ -50,8 +50,22 @@ type Chat = {
   agentId: string;
   repoId: string;
   title: string;
+  source?: string;
+  externalId?: string | null;
+  cwd?: string | null;
   createdAt: string;
   updatedAt: string;
+};
+
+type ChatMessage = {
+  id: string;
+  chatId: string;
+  role: "user" | "assistant" | "system" | "tool";
+  content: string;
+  source: string;
+  externalId?: string | null;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
 };
 
 type Job = {
@@ -108,6 +122,27 @@ function defaultProjectPath(name: string) {
   return `C:\\Projects\\${slug || "new-project"}`;
 }
 
+function diffRows(stat: string | null) {
+  if (!stat) return [];
+  return stat
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const match = line.match(/^(.*?)\s+\|\s+(\d+)\s+([+\-]+)?/);
+      return {
+        file: match?.[1]?.trim() || line,
+        changed: Number(match?.[2] ?? 0),
+        bars: match?.[3] ?? ""
+      };
+    })
+    .slice(0, 8);
+}
+
+function messagePreview(value: string) {
+  return value.length > 140 ? `${value.slice(0, 140)}...` : value;
+}
+
 function App() {
   const [csrf, setCsrf] = useState<string>();
   const [email, setEmail] = useState("");
@@ -116,6 +151,7 @@ function App() {
   const [repos, setRepos] = useState<Repo[]>([]);
   const [chats, setChats] = useState<Chat[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [activeJob, setActiveJob] = useState<Job | null>(null);
   const [logs, setLogs] = useState<Log[]>([]);
   const [progressByJob, setProgressByJob] = useState<Record<string, JobProgress>>({});
@@ -171,6 +207,7 @@ function App() {
     if (activeChatId && !nextChats.some((chat: Chat) => chat.id === activeChatId)) {
       setActiveChatId("");
       setJobs([]);
+      setMessages([]);
       setActiveJob(null);
       setLogs([]);
     }
@@ -182,6 +219,7 @@ function App() {
     const data = await response.json();
     setActiveChatId(chatId);
     setJobs(data.jobs);
+    setMessages(data.messages ?? []);
     if (data.jobs[0]) await loadJob(data.jobs[0].id);
     else {
       setActiveJob(null);
@@ -205,6 +243,7 @@ function App() {
     setGitNotice("");
     setActiveChatId("");
     setJobs([]);
+    setMessages([]);
     setActiveJob(null);
     setLogs([]);
     setProjectPanel(null);
@@ -216,6 +255,7 @@ function App() {
     setChats([]);
     setActiveChatId("");
     setJobs([]);
+    setMessages([]);
     setActiveJob(null);
     setLogs([]);
     setProjectPanel(null);
@@ -568,6 +608,19 @@ function App() {
                   </aside>
 
                   <section className="job-detail">
+                    <section className="chat-thread">
+                      {messages.length ? messages.map((message) => (
+                        <article className={`message ${message.role}`} key={message.id}>
+                          <div className="message-meta">
+                            <span>{message.role === "user" ? "You" : message.source === "vscode" ? "VS Code" : "Codex"}</span>
+                            <small>{new Date(message.createdAt).toLocaleString()}</small>
+                          </div>
+                          <p>{messagePreview(message.content)}</p>
+                        </article>
+                      )) : (
+                        <div className="empty">Start this chat or wait for local Codex/VS Code history sync.</div>
+                      )}
+                    </section>
                     {activeJob ? (
                       <>
                         <div className="job-head">
@@ -585,6 +638,20 @@ function App() {
                               <span>+{activeProgress.added ?? 0}</span>
                               <span>-{activeProgress.deleted ?? 0}</span>
                             </div>
+                          </div>
+                        )}
+                        {activeJob.gitDiffStat && (
+                          <div className="edited-card">
+                            <div className="edited-head">
+                              <strong>Edited {diffRows(activeJob.gitDiffStat).length || activeProgress?.filesChanged || 0} files</strong>
+                              <span>+{activeProgress?.added ?? 0} -{activeProgress?.deleted ?? 0}</span>
+                            </div>
+                            {diffRows(activeJob.gitDiffStat).map((row) => (
+                              <div className="edited-row" key={row.file}>
+                                <span>{row.file}</span>
+                                <small>{row.changed} {row.bars}</small>
+                              </div>
+                            ))}
                           </div>
                         )}
                         <pre className="logs">{logs.map((line) => `[${line.stream}] ${line.message}`).join("\n") || "Waiting for logs..."}</pre>

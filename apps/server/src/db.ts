@@ -65,6 +65,7 @@ export type JobRow = {
   git_diff_stat: string | null;
   git_diff: string | null;
   branch_name: string | null;
+  codex_thread_id: string | null;
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
@@ -75,8 +76,22 @@ export type ChatRow = {
   agent_id: string;
   repo_id: string;
   title: string;
+  source: string;
+  external_id: string | null;
+  cwd: string | null;
   created_at: string;
   updated_at: string;
+};
+
+export type ChatMessageRow = {
+  id: string;
+  chat_id: string;
+  role: "user" | "assistant" | "system" | "tool";
+  content: string;
+  source: string;
+  external_id: string | null;
+  metadata_json: string | null;
+  created_at: string;
 };
 
 export type LogRow = {
@@ -152,6 +167,7 @@ export function openDb(path: string): DatabaseSync {
       git_diff_stat TEXT,
       git_diff TEXT,
       branch_name TEXT,
+      codex_thread_id TEXT,
       created_at TEXT NOT NULL,
       started_at TEXT,
       finished_at TEXT
@@ -161,8 +177,21 @@ export function openDb(path: string): DatabaseSync {
       agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
       repo_id TEXT NOT NULL,
       title TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'web',
+      external_id TEXT,
+      cwd TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS chat_messages (
+      id TEXT PRIMARY KEY,
+      chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+      role TEXT NOT NULL,
+      content TEXT NOT NULL,
+      source TEXT NOT NULL,
+      external_id TEXT,
+      metadata_json TEXT,
+      created_at TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS job_logs (
       id TEXT PRIMARY KEY,
@@ -174,10 +203,16 @@ export function openDb(path: string): DatabaseSync {
     CREATE INDEX IF NOT EXISTS idx_jobs_agent_status ON jobs(agent_id, status, created_at);
     CREATE INDEX IF NOT EXISTS idx_chats_repo_updated ON chats(agent_id, repo_id, updated_at);
     CREATE INDEX IF NOT EXISTS idx_logs_job_at ON job_logs(job_id, at);
+    CREATE INDEX IF NOT EXISTS idx_messages_chat_at ON chat_messages(chat_id, created_at);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_chats_external ON chats(agent_id, source, external_id) WHERE external_id IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_external ON chat_messages(chat_id, source, external_id) WHERE external_id IS NOT NULL;
   `);
   const jobColumns = db.prepare("PRAGMA table_info(jobs)").all() as Array<{ name: string }>;
   if (!jobColumns.some((column) => column.name === "chat_id")) {
     db.exec("ALTER TABLE jobs ADD COLUMN chat_id TEXT");
+  }
+  if (!jobColumns.some((column) => column.name === "codex_thread_id")) {
+    db.exec("ALTER TABLE jobs ADD COLUMN codex_thread_id TEXT");
   }
   const repoColumns = db.prepare("PRAGMA table_info(repos)").all() as Array<{ name: string }>;
   if (!repoColumns.some((column) => column.name === "github_url")) {
@@ -189,7 +224,20 @@ export function openDb(path: string): DatabaseSync {
   if (!repoColumns.some((column) => column.name === "domain")) {
     db.exec("ALTER TABLE repos ADD COLUMN domain TEXT");
   }
+  const chatColumns = db.prepare("PRAGMA table_info(chats)").all() as Array<{ name: string }>;
+  if (!chatColumns.some((column) => column.name === "source")) {
+    db.exec("ALTER TABLE chats ADD COLUMN source TEXT NOT NULL DEFAULT 'web'");
+  }
+  if (!chatColumns.some((column) => column.name === "external_id")) {
+    db.exec("ALTER TABLE chats ADD COLUMN external_id TEXT");
+  }
+  if (!chatColumns.some((column) => column.name === "cwd")) {
+    db.exec("ALTER TABLE chats ADD COLUMN cwd TEXT");
+  }
   db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_chat_created ON jobs(chat_id, created_at)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_messages_chat_at ON chat_messages(chat_id, created_at)");
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_chats_external ON chats(agent_id, source, external_id) WHERE external_id IS NOT NULL");
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_external ON chat_messages(chat_id, source, external_id) WHERE external_id IS NOT NULL");
   return db;
 }
 

@@ -24,6 +24,7 @@ import {
   nowIso,
   openDb,
   type AgentRow,
+  type ChatMessageRow,
   type ChatRow,
   type JobRow,
   type LogRow,
@@ -153,6 +154,85 @@ function appendLog(log: Omit<LogRow, "id">): void {
   broadcast({ type: "job.log", jobId: log.job_id, stream: log.stream, message: log.message, at: log.at });
 }
 
+function appendChatMessage(message: Omit<ChatMessageRow, "id"> & { id?: string }): void {
+  db.prepare(`
+    INSERT INTO chat_messages (id,chat_id,role,content,source,external_id,metadata_json,created_at)
+    VALUES (?,?,?,?,?,?,?,?)
+    ON CONFLICT(id) DO UPDATE SET
+      role=excluded.role,
+      content=excluded.content,
+      source=excluded.source,
+      external_id=excluded.external_id,
+      metadata_json=excluded.metadata_json,
+      created_at=excluded.created_at
+  `).run(
+    message.id ?? id("msg"),
+    message.chat_id,
+    message.role,
+    message.content.slice(0, 200000),
+    message.source,
+    message.external_id ?? null,
+    message.metadata_json ?? null,
+    message.created_at
+  );
+  broadcast({ type: "chats.updated", agentId: chatAgentId(message.chat_id), repoId: chatRepoId(message.chat_id) });
+}
+
+function chatAgentId(chatId: string): string {
+  const row = db.prepare("SELECT agent_id FROM chats WHERE id = ?").get(chatId) as { agent_id: string } | undefined;
+  return row?.agent_id ?? "";
+}
+
+function chatRepoId(chatId: string): string {
+  const row = db.prepare("SELECT repo_id FROM chats WHERE id = ?").get(chatId) as { repo_id: string } | undefined;
+  return row?.repo_id ?? "";
+}
+
+function serializeMessage(message: ChatMessageRow) {
+  return {
+    id: message.id,
+    chatId: message.chat_id,
+    role: message.role,
+    content: message.content,
+    source: message.source,
+    externalId: message.external_id,
+    metadata: message.metadata_json ? JSON.parse(message.metadata_json) : undefined,
+    createdAt: message.created_at
+  };
+}
+
+function upsertSyncedChat(agentId: string, sync: Extract<AgentToServer, { type: "chat.sync" }>): void {
+  const repo = db.prepare("SELECT * FROM repos WHERE agent_id = ? AND id = ?").get(agentId, sync.repoId) as RepoRow | undefined;
+  if (!repo) return;
+  const stamp = nowIso();
+  let chat = db.prepare("SELECT * FROM chats WHERE agent_id = ? AND source = ? AND external_id = ?")
+    .get(agentId, sync.source, sync.externalId) as ChatRow | undefined;
+  if (chat) {
+    db.prepare("UPDATE chats SET repo_id=?, title=?, cwd=?, updated_at=? WHERE id=?")
+      .run(sync.repoId, sync.title, sync.cwd ?? null, sync.updatedAt, chat.id);
+  } else {
+    const chatId = id("chat");
+    db.prepare("INSERT INTO chats (id,agent_id,repo_id,title,source,external_id,cwd,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)")
+      .run(chatId, agentId, sync.repoId, sync.title, sync.source, sync.externalId, sync.cwd ?? null, sync.updatedAt, sync.updatedAt);
+    chat = db.prepare("SELECT * FROM chats WHERE id = ?").get(chatId) as ChatRow;
+  }
+  for (const message of sync.messages) {
+    const existing = message.externalId
+      ? db.prepare("SELECT id FROM chat_messages WHERE chat_id = ? AND source = ? AND external_id = ?")
+        .get(chat.id, message.source, message.externalId) as { id: string } | undefined
+      : undefined;
+    if (existing) {
+      db.prepare("UPDATE chat_messages SET role=?, content=?, metadata_json=?, created_at=? WHERE id=?")
+        .run(message.role, message.content.slice(0, 200000), message.metadata ? JSON.stringify(message.metadata) : null, message.createdAt, existing.id);
+    } else {
+      db.prepare("INSERT INTO chat_messages (id,chat_id,role,content,source,external_id,metadata_json,created_at) VALUES (?,?,?,?,?,?,?,?)")
+        .run(message.id ?? id("msg"), chat.id, message.role, message.content.slice(0, 200000), message.source, message.externalId ?? null, message.metadata ? JSON.stringify(message.metadata) : null, message.createdAt);
+    }
+  }
+  db.prepare("UPDATE chats SET updated_at = ? WHERE id = ?").run(sync.updatedAt || stamp, chat.id);
+  broadcast({ type: "chats.updated", agentId, repoId: sync.repoId });
+}
+
 function dispatchQueue(agentId: string): void {
   const agent = agents.get(agentId);
   if (!agent) return;
@@ -208,6 +288,7 @@ function serializeJob(job: JobRow) {
     gitDiffStat: job.git_diff_stat,
     gitDiff: job.git_diff,
     branchName: job.branch_name,
+    codexThreadId: job.codex_thread_id,
     createdAt: job.created_at,
     startedAt: job.started_at,
     finishedAt: job.finished_at
@@ -220,6 +301,9 @@ function serializeChat(chat: ChatRow) {
     agentId: chat.agent_id,
     repoId: chat.repo_id,
     title: chat.title,
+    source: chat.source,
+    externalId: chat.external_id,
+    cwd: chat.cwd,
     createdAt: chat.created_at,
     updatedAt: chat.updated_at
   };
@@ -383,6 +467,15 @@ async function createApp(): Promise<FastifyInstance> {
     const stamp = nowIso();
     db.prepare("INSERT INTO chats (id,agent_id,repo_id,title,created_at,updated_at) VALUES (?,?,?,?,?,?)")
       .run(chatId, parsed.data.agentId, parsed.data.repoId, parsed.data.title, stamp, stamp);
+    appendChatMessage({
+      chat_id: chatId,
+      role: "system",
+      content: "Chat created on codex.rodion.pro.",
+      source: "web",
+      external_id: `chat:${chatId}:created`,
+      metadata_json: null,
+      created_at: stamp
+    });
     broadcast({ type: "chats.updated", agentId: parsed.data.agentId, repoId: parsed.data.repoId });
     return reply.code(201).send({ chatId });
   });
@@ -393,7 +486,8 @@ async function createApp(): Promise<FastifyInstance> {
     const chat = db.prepare("SELECT * FROM chats WHERE id = ?").get(chatId) as ChatRow | undefined;
     if (!chat) return reply.code(404).send({ error: "not_found" });
     const rows = db.prepare("SELECT * FROM jobs WHERE chat_id = ? ORDER BY created_at DESC").all(chatId) as JobRow[];
-    return { chat: serializeChat(chat), jobs: rows.map(serializeJob) };
+    const messages = db.prepare("SELECT * FROM chat_messages WHERE chat_id = ? ORDER BY created_at ASC").all(chatId) as ChatMessageRow[];
+    return { chat: serializeChat(chat), jobs: rows.map(serializeJob), messages: messages.map(serializeMessage) };
   });
 
   app.get("/api/jobs", async (request, reply) => {
@@ -431,16 +525,26 @@ async function createApp(): Promise<FastifyInstance> {
     } else {
       chatId = id("chat");
       const stamp = nowIso();
-      db.prepare("INSERT INTO chats (id,agent_id,repo_id,title,created_at,updated_at) VALUES (?,?,?,?,?,?)")
-        .run(chatId, parsed.data.agentId, parsed.data.repoId, parsed.data.prompt.slice(0, 80), stamp, stamp);
+      db.prepare("INSERT INTO chats (id,agent_id,repo_id,title,source,created_at,updated_at) VALUES (?,?,?,?,?,?,?)")
+        .run(chatId, parsed.data.agentId, parsed.data.repoId, parsed.data.prompt.slice(0, 80), "web", stamp, stamp);
       broadcast({ type: "chats.updated", agentId: parsed.data.agentId, repoId: parsed.data.repoId });
     }
     const jobId = id("job");
+    const createdAt = nowIso();
     db.prepare(`
       INSERT INTO jobs (id,chat_id,agent_id,repo_id,prompt,sandbox,branch_mode,kind,status,created_at)
       VALUES (?,?,?,?,?,?,?,?,?,?)
-    `).run(jobId, chatId, parsed.data.agentId, parsed.data.repoId, parsed.data.prompt, parsed.data.sandbox, parsed.data.branchMode, "codex", "queued", nowIso());
-    db.prepare("UPDATE chats SET updated_at = ? WHERE id = ?").run(nowIso(), chatId);
+    `).run(jobId, chatId, parsed.data.agentId, parsed.data.repoId, parsed.data.prompt, parsed.data.sandbox, parsed.data.branchMode, "codex", "queued", createdAt);
+    appendChatMessage({
+      chat_id: chatId,
+      role: "user",
+      content: parsed.data.prompt,
+      source: "web",
+      external_id: `job:${jobId}:prompt`,
+      metadata_json: JSON.stringify({ jobId }),
+      created_at: createdAt
+    });
+    db.prepare("UPDATE chats SET updated_at = ? WHERE id = ?").run(createdAt, chatId);
     broadcast({ type: "chats.updated", agentId: parsed.data.agentId, repoId: parsed.data.repoId });
     broadcast({ type: "job.created", jobId });
     broadcast({ type: "job.updated", jobId, status: "queued" });
@@ -529,7 +633,7 @@ async function createApp(): Promise<FastifyInstance> {
       }
       if (parsed.type === "job.done") {
         db.prepare(`
-          UPDATE jobs SET status=?, exit_code=?, final_message=?, git_status=?, git_diff_stat=?, git_diff=?, branch_name=?, finished_at=?
+          UPDATE jobs SET status=?, exit_code=?, final_message=?, git_status=?, git_diff_stat=?, git_diff=?, branch_name=?, codex_thread_id=?, finished_at=?
           WHERE id=?
         `).run(
           parsed.status,
@@ -539,12 +643,34 @@ async function createApp(): Promise<FastifyInstance> {
           parsed.gitDiffStat ?? null,
           parsed.gitDiff ?? null,
           parsed.branchName ?? null,
+          parsed.codexThreadId ?? null,
           nowIso(),
           parsed.jobId
         );
+        const job = db.prepare("SELECT * FROM jobs WHERE id = ?").get(parsed.jobId) as JobRow | undefined;
+        if (job?.chat_id && parsed.finalMessage) {
+          appendChatMessage({
+            chat_id: job.chat_id,
+            role: "assistant",
+            content: parsed.finalMessage,
+            source: "codex",
+            external_id: `job:${parsed.jobId}:final`,
+            metadata_json: JSON.stringify({
+              jobId: parsed.jobId,
+              status: parsed.status,
+              codexThreadId: parsed.codexThreadId,
+              gitStatus: parsed.gitStatus,
+              gitDiffStat: parsed.gitDiffStat
+            }),
+            created_at: nowIso()
+          });
+        }
         db.prepare("UPDATE agents SET current_job_id = NULL WHERE id = ?").run(agent.id);
         broadcast({ type: "job.updated", jobId: parsed.jobId, status: parsed.status });
         dispatchQueue(agent.id);
+      }
+      if (parsed.type === "chat.sync") {
+        upsertSyncedChat(agent.id, parsed);
       }
       if (parsed.type === "project.result") {
         const pending = projectRequests.get(parsed.requestId);
