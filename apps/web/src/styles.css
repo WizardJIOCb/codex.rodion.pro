@@ -313,23 +313,32 @@ textarea:focus {
   gap: 8px;
   align-content: start;
   min-width: 0;
+  overflow: hidden;
 }
 
 .new-chat {
   display: grid;
-  grid-template-columns: 1fr 38px;
+  grid-template-columns: minmax(0, 1fr) 38px;
   gap: 6px;
+  min-width: 0;
+}
+
+.new-chat input {
+  min-width: 0;
 }
 
 .chat-list {
   display: grid;
   gap: 6px;
+  min-width: 0;
 }
 
 .chat {
   display: grid;
   gap: 4px;
   width: 100%;
+  min-width: 0;
+  overflow: hidden;
   padding: 9px;
   text-align: left;
   color: #202123;
@@ -344,7 +353,15 @@ textarea:focus {
 }
 
 .chat small {
+  min-width: 0;
   color: #6e6e80;
+  overflow-wrap: anywhere;
+}
+
+.chat span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .tiny {
