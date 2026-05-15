@@ -186,6 +186,8 @@ textarea:focus {
   display: grid;
   align-content: start;
   gap: 8px;
+  overflow: auto;
+  padding-right: 2px;
 }
 
 .nav-item {
@@ -202,6 +204,102 @@ textarea:focus {
   color: var(--text);
   background: rgba(86, 197, 150, 0.1);
   box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.nav-group {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.nav-subtree,
+.nav-project,
+.nav-project-chats {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.nav-subtree {
+  padding-left: 12px;
+  border-left: 1px solid rgba(86, 197, 150, 0.18);
+}
+
+.nav-project-chats {
+  padding-left: 12px;
+}
+
+.nav-leaf {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  min-width: 0;
+  padding: 7px 8px;
+  border-radius: 6px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  text-align: left;
+}
+
+.nav-leaf span,
+.nav-leaf small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-leaf small,
+.nav-empty {
+  color: var(--soft);
+  font-size: 11px;
+}
+
+.nav-leaf:hover,
+.nav-leaf.active {
+  color: var(--text);
+  background: rgba(86, 197, 150, 0.08);
+  border-color: rgba(86, 197, 150, 0.24);
+}
+
+.nav-leaf.project {
+  color: #cbd7d1;
+}
+
+.nav-leaf.chat-child {
+  padding-block: 6px;
+  font-size: 12px;
+}
+
+.nav-empty {
+  padding: 6px 8px;
+}
+
+.nav-empty.inset {
+  padding-left: 10px;
+}
+
+.nav-new-chat {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px;
+  gap: 5px;
+  min-width: 0;
+}
+
+.nav-new-chat input {
+  min-height: 32px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.nav-new-chat button {
+  min-height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  color: #06110d;
+  background: var(--accent);
 }
 
 .nav-agent {
@@ -377,7 +475,7 @@ textarea:focus {
 
 .project-workspace {
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
   align-items: start;
   min-width: 0;

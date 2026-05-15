@@ -516,8 +516,54 @@ function App() {
           <strong>codex.rodion.pro</strong>
         </div>
         <nav>
-          <button className="nav-item active"><MessageSquare size={17} /> Chat</button>
-          <button className="nav-item" onClick={clearProjectSelection}><FolderGit2 size={17} /> Projects</button>
+          <div className="nav-group">
+            <button className="nav-item active"><MessageSquare size={17} /> Chat</button>
+            <div className="nav-subtree">
+              {selectedRepo ? (
+                <>
+                  <form className="nav-new-chat" onSubmit={createChat}>
+                    <input placeholder="New chat title" value={chatTitle} onChange={(event) => setChatTitle(event.target.value)} />
+                    <button disabled={busy || !chatTitle.trim()}><Plus size={14} /></button>
+                  </form>
+                  {chats.map((chat) => (
+                    <button className={activeChatId === chat.id ? "nav-leaf active" : "nav-leaf"} key={chat.id} onClick={() => loadChat(chat.id)}>
+                      <span>{chat.title}</span>
+                      <small>{new Date(chat.updatedAt).toLocaleString()}</small>
+                    </button>
+                  ))}
+                  {!chats.length && <span className="nav-empty">No chats yet</span>}
+                </>
+              ) : (
+                <span className="nav-empty">Choose a project</span>
+              )}
+            </div>
+          </div>
+          <div className="nav-group">
+            <button className="nav-item" onClick={clearProjectSelection}><FolderGit2 size={17} /> Projects</button>
+            <div className="nav-subtree">
+              {repos.map((repo) => {
+                const selected = selectedRepo?.agentId === repo.agentId && selectedRepo.id === repo.id;
+                return (
+                  <div className="nav-project" key={`${repo.agentId}:${repo.id}`}>
+                    <button className={selected ? "nav-leaf project active" : "nav-leaf project"} onClick={() => selectProject(repo)}>
+                      <span>{repo.name}</span>
+                      <small>{repo.currentBranch || "no branch"} · {repo.dirty ? "dirty" : "clean"}</small>
+                    </button>
+                    {selected && (
+                      <div className="nav-project-chats">
+                        {chats.map((chat) => (
+                          <button className={activeChatId === chat.id ? "nav-leaf chat-child active" : "nav-leaf chat-child"} key={chat.id} onClick={() => loadChat(chat.id)}>
+                            <span>{chat.title}</span>
+                          </button>
+                        ))}
+                        {!chats.length && <span className="nav-empty inset">No chats</span>}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
           <button className="nav-item"><Activity size={17} /> Runs</button>
           <button className="nav-item"><Settings size={17} /> Settings</button>
         </nav>
@@ -616,26 +662,12 @@ function App() {
 
       {selectedRepo && (
         <section className="project-workspace">
-          <aside className="chat-sidebar">
-            <div className="section-head">
-              <h2><MessageSquare size={18} /> Chats</h2>
-              <button className="icon tiny" onClick={() => openProjectSettings(selectedRepo)} title="Настройки"><Settings size={16} /></button>
-            </div>
-            <form className="new-chat" onSubmit={createChat}>
-              <input placeholder="New chat title" value={chatTitle} onChange={(event) => setChatTitle(event.target.value)} />
-              <button disabled={busy || !chatTitle.trim()}><Plus size={16} /></button>
-            </form>
-            <div className="chat-list">
-              {chats.map((chat) => (
-                <button className={activeChatId === chat.id ? "chat active" : "chat"} key={chat.id} onClick={() => loadChat(chat.id)}>
-                  <span>{chat.title}</span>
-                  <small>{new Date(chat.updatedAt).toLocaleString()}</small>
-                </button>
-              ))}
-            </div>
-          </aside>
 
           <section className="chat-work">
+            <div className="section-head">
+              <h2><MessageSquare size={18} /> {activeChat?.title ?? "Project chat"}</h2>
+              <button className="icon tiny" onClick={() => openProjectSettings(selectedRepo)} title="Настройки"><Settings size={16} /></button>
+            </div>
             <div className="repo-meta">
               <GitBranch size={16} /> {selectedRepo.currentBranch || "no branch"} · {selectedRepo.dirty ? "dirty" : "clean"} · {selectedRepo.pathMasked}
               {selectedRepo.domain && <> · {selectedRepo.domain}</>}
