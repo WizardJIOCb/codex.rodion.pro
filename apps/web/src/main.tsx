@@ -121,6 +121,7 @@ function App() {
   const [projectPanel, setProjectPanel] = useState<"new" | "settings" | null>(null);
   const [projectName, setProjectName] = useState("");
   const [projectPath, setProjectPath] = useState("");
+  const [originalProjectPath, setOriginalProjectPath] = useState("");
   const [chatTitle, setChatTitle] = useState("");
 
   const selectedRepo = useMemo(() => repos.find((repo) => `${repo.agentId}:${repo.id}` === repoKey), [repoKey, repos]);
@@ -198,12 +199,14 @@ function App() {
   function openNewProject() {
     setProjectName("New Project");
     setProjectPath(defaultProjectPath("New Project"));
+    setOriginalProjectPath("");
     setProjectPanel("new");
   }
 
   function openProjectSettings(repo: Repo) {
     setProjectName(repo.name);
     setProjectPath(repo.pathMasked);
+    setOriginalProjectPath(repo.pathMasked);
     setSandbox(repo.defaultSandbox);
     setProjectPanel("settings");
   }
@@ -259,16 +262,17 @@ function App() {
     if (!csrf || !selectedAgent || !projectName.trim() || !projectPath.trim()) return;
     setBusy(true);
     const isNew = projectPanel === "new";
+    const body: Record<string, unknown> = {
+      agentId: selectedAgent.id,
+      name: projectName.trim(),
+      defaultSandbox: sandbox,
+      allowedSandboxes: ["read-only", "workspace-write"]
+    };
+    if (isNew || projectPath.trim() !== originalProjectPath) body.path = projectPath.trim();
     const response = await api(isNew ? "/api/projects" : `/api/projects/${selectedRepo?.agentId}/${selectedRepo?.id}`, {
       method: isNew ? "POST" : "PUT",
       headers: { "x-csrf-token": csrf },
-      body: JSON.stringify({
-        agentId: selectedAgent.id,
-        name: projectName.trim(),
-        path: projectPath.trim(),
-        defaultSandbox: sandbox,
-        allowedSandboxes: ["read-only", "workspace-write"]
-      })
+      body: JSON.stringify(body)
     });
     setBusy(false);
     if (!response.ok) return;
