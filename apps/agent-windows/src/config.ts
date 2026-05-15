@@ -10,6 +10,17 @@ const TestCommandSchema = z.object({
   timeoutMs: z.number().int().positive().default(900000)
 });
 
+const DeployConfigSchema = z.object({
+  sshTarget: z.string().min(1),
+  sourceDir: z.string().min(1).default("dist"),
+  cleanRemote: z.boolean().default(true),
+  buildCommand: z.object({
+    command: z.string().min(1),
+    args: z.array(z.string()).default([]),
+    timeoutMs: z.number().int().positive().default(900000)
+  }).optional()
+});
+
 const RepoConfigSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
@@ -17,6 +28,7 @@ const RepoConfigSchema = z.object({
   githubUrl: z.string().max(300).optional(),
   serverPath: z.string().max(260).optional(),
   domain: z.string().max(253).optional(),
+  deploy: DeployConfigSchema.optional(),
   defaultSandbox: z.enum(["read-only", "workspace-write"]),
   allowedSandboxes: z.array(z.enum(["read-only", "workspace-write"])).min(1),
   testCommands: z.array(TestCommandSchema).default([])

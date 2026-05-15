@@ -59,6 +59,23 @@ async function sendGitResult(
   });
 }
 
+async function sendDeployResult(
+  send: (message: AgentToServer) => void,
+  requestId: string,
+  ok: boolean,
+  output: string,
+  error?: string
+) {
+  send({
+    type: "deploy.result",
+    requestId,
+    ok,
+    output: redact(output),
+    error: error ? redact(error) : undefined,
+    repos: await scanRepos(config)
+  });
+}
+
 async function gitStatusLineFromOutput(output: string): Promise<string> {
   const lastLine = output.trim().split(/\r?\n/).filter(Boolean).at(-1);
   return lastLine ?? "Git sync completed.";
@@ -107,6 +124,51 @@ async function gitSync(repoId: string, message: string, remoteUrl?: string): Pro
   await runGit(["push", "-u", "origin", branch], 120000);
   const status = await runGit(["status", "--short", "--branch"], 15000);
   return [...output, status.stdout.trim() || "Git sync completed."].filter(Boolean).join("\n");
+}
+
+async function deployProject(repoId: string): Promise<string> {
+  const repo = config.repos.find((item) => item.id === repoId);
+  if (!repo) throw new Error("Project not found in agent config.");
+  if (!repo.serverPath) throw new Error("Project server folder is not configured.");
+  if (!repo.deploy) throw new Error("Project deploy settings are not configured.");
+  if (!repo.serverPath.replace(/\\/g, "/").startsWith("/var/www/")) {
+    throw new Error("Refusing to deploy outside /var/www.");
+  }
+
+  const output: string[] = [];
+  const runStep = async (label: string, command: string, args: string[], cwd = repo.path, timeoutMs = 120000) => {
+    output.push(`$ ${label}`);
+    const result = await runCapture(command, args, cwd, timeoutMs);
+    const text = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join("\n");
+    if (text) output.push(text);
+    if (result.exitCode !== 0) throw new Error([...output, `${label} failed with exit code ${result.exitCode}`].join("\n"));
+    return result;
+  };
+
+  const build = repo.deploy.buildCommand;
+  if (build) await runStep([build.command, ...build.args].join(" "), build.command, build.args, repo.path, build.timeoutMs);
+
+  const sourceDir = resolveProjectPath(repo.path, repo.deploy.sourceDir);
+  const sourceForScp = `${sourceDir.replace(/\\/g, "/")}/.`;
+  const remotePath = repo.serverPath.replace(/\/+$/g, "");
+  const quotedRemotePath = shellQuote(remotePath);
+  const cleanCommand = repo.deploy.cleanRemote
+    ? `mkdir -p ${quotedRemotePath} && find ${quotedRemotePath} -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +`
+    : `mkdir -p ${quotedRemotePath}`;
+
+  await runStep(`ssh ${repo.deploy.sshTarget} prepare ${remotePath}`, "ssh", [repo.deploy.sshTarget, cleanCommand], repo.path, 60000);
+  await runStep(`scp ${sourceForScp} ${repo.deploy.sshTarget}:${remotePath}/`, "scp", ["-r", sourceForScp, `${repo.deploy.sshTarget}:${remotePath}/`], repo.path, 180000);
+  await runStep(`ssh ${repo.deploy.sshTarget} permissions ${remotePath}`, "ssh", [repo.deploy.sshTarget, `chown -R www-data:www-data ${quotedRemotePath} 2>/dev/null || true`], repo.path, 60000);
+  return [...output, `Deploy completed: ${repo.domain ? `https://${repo.domain}` : remotePath}`].join("\n");
+}
+
+function resolveProjectPath(projectPath: string, childPath: string): string {
+  if (/^[a-z]:[\\/]/i.test(childPath) || childPath.startsWith("\\\\")) return childPath;
+  return `${projectPath.replace(/[\\/]+$/g, "")}\\${childPath.replace(/^[\\/]+/g, "")}`;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 async function toolVersion(command: string, args = ["--version"]): Promise<string | undefined> {
@@ -229,6 +291,16 @@ function connect() {
         await sendGitResult(send, message.requestId, true, output);
       } catch (error) {
         await sendGitResult(send, message.requestId, false, "", error instanceof Error ? error.message : String(error));
+      }
+      return;
+    }
+
+    if (message.type === "project.deploy") {
+      try {
+        const output = await deployProject(message.repoId);
+        await sendDeployResult(send, message.requestId, true, output);
+      } catch (error) {
+        await sendDeployResult(send, message.requestId, false, "", error instanceof Error ? error.message : String(error));
       }
       return;
     }

@@ -397,7 +397,7 @@ label {
 
 .git-panel {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto;
+  grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto auto;
   gap: 6px;
   align-items: start;
   min-width: 0;

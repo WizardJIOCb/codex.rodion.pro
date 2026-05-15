@@ -172,6 +172,8 @@ function App() {
   const [gitRemoteUrl, setGitRemoteUrl] = useState("");
   const [gitNotice, setGitNotice] = useState("");
   const [gitBusy, setGitBusy] = useState(false);
+  const [deployNotice, setDeployNotice] = useState("");
+  const [deployBusy, setDeployBusy] = useState(false);
 
   const selectedRepo = useMemo(() => repos.find((repo) => `${repo.agentId}:${repo.id}` === repoKey), [repoKey, repos]);
   const activeChat = useMemo(() => chats.find((chat) => chat.id === activeChatId), [activeChatId, chats]);
@@ -241,6 +243,7 @@ function App() {
     setGitMessage(`Update ${repo.name}`);
     setGitRemoteUrl(repo.githubUrl ?? "");
     setGitNotice("");
+    setDeployNotice("");
     setActiveChatId("");
     setJobs([]);
     setMessages([]);
@@ -260,6 +263,7 @@ function App() {
     setLogs([]);
     setProjectPanel(null);
     setGitNotice("");
+    setDeployNotice("");
   }
 
   function openNewProject() {
@@ -437,6 +441,25 @@ function App() {
     await refresh();
   }
 
+  async function deployProject() {
+    if (!selectedRepo || !csrf) return;
+    setDeployBusy(true);
+    setDeployNotice("Deploy started...");
+    const response = await api(`/api/projects/${selectedRepo.agentId}/${selectedRepo.id}/deploy`, {
+      method: "POST",
+      headers: { "x-csrf-token": csrf },
+      body: "{}"
+    });
+    const data = await response.json().catch(() => ({}));
+    setDeployBusy(false);
+    if (!response.ok) {
+      setDeployNotice(data.output || data.error || "Deploy failed.");
+      return;
+    }
+    setDeployNotice(data.output || "Deploy completed.");
+    await refresh();
+  }
+
   async function logout() {
     if (csrf) await api("/api/logout", { method: "POST", headers: { "x-csrf-token": csrf }, body: "{}" });
     setCsrf(undefined);
@@ -577,7 +600,9 @@ function App() {
               <input aria-label="Commit message" value={gitMessage} onChange={(event) => setGitMessage(event.target.value)} />
               <input aria-label="Remote URL" placeholder="origin URL, optional" value={gitRemoteUrl} onChange={(event) => setGitRemoteUrl(event.target.value)} />
               <button disabled={gitBusy || !gitMessage.trim()} type="submit"><UploadCloud size={16} /> Commit & push</button>
+              <button disabled={deployBusy || !selectedRepo.serverPath} type="button" onClick={deployProject}><UploadCloud size={16} /> Deploy</button>
               {gitNotice && <pre>{gitNotice}</pre>}
+              {deployNotice && <pre>{deployNotice}</pre>}
             </form>
             {activeChat ? (
               <>

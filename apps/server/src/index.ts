@@ -8,6 +8,7 @@ import bcrypt from "bcryptjs";
 import {
   AgentToServerSchema,
   CreateChatSchema,
+  DeploySchema,
   GitSyncSchema,
   CreateJobSchema,
   CreateProjectSchema,
@@ -61,6 +62,11 @@ const gitRequests = new Map<string, {
   reject: (error: Error) => void;
   timer: NodeJS.Timeout;
 }>();
+const deployRequests = new Map<string, {
+  resolve: (value: Extract<AgentToServer, { type: "deploy.result" }>) => void;
+  reject: (error: Error) => void;
+  timer: NodeJS.Timeout;
+}>();
 const STALE_JOB_GRACE_MS = 2 * 60 * 1000;
 
 function broadcast(event: UiEvent): void {
@@ -102,6 +108,22 @@ function requestAgentGit(
       reject(new Error("agent_timeout"));
     }, 120000);
     gitRequests.set(message.requestId, { resolve, reject, timer });
+    agent.send(message);
+  });
+}
+
+function requestAgentDeploy(
+  agentId: string,
+  message: Extract<ServerToAgent, { type: "project.deploy" }>
+): Promise<Extract<AgentToServer, { type: "deploy.result" }>> {
+  const agent = agents.get(agentId);
+  if (!agent) return Promise.reject(new Error("agent_offline"));
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      deployRequests.delete(message.requestId);
+      reject(new Error("agent_timeout"));
+    }, 300000);
+    deployRequests.set(message.requestId, { resolve, reject, timer });
     agent.send(message);
   });
 }
@@ -472,6 +494,28 @@ async function createApp(): Promise<FastifyInstance> {
     }
   });
 
+  app.post("/api/projects/:agentId/:repoId/deploy", async (request, reply) => {
+    if (!requireCsrf(db, request, reply)) return;
+    const params = request.params as { agentId: string; repoId: string };
+    const parsed = DeploySchema.safeParse(request.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_deploy", details: parsed.error.flatten() });
+    const repo = db.prepare("SELECT * FROM repos WHERE agent_id = ? AND id = ?")
+      .get(params.agentId, params.repoId) as RepoRow | undefined;
+    if (!repo) return reply.code(404).send({ error: "repo_not_found" });
+    try {
+      const result = await requestAgentDeploy(params.agentId, {
+        type: "project.deploy",
+        requestId: id("req"),
+        repoId: params.repoId
+      });
+      if (!result.ok) return reply.code(400).send({ error: result.error ?? "deploy_failed", output: result.output });
+      if (result.repos) upsertRepos(params.agentId, result.repos);
+      return { ok: true, output: result.output };
+    } catch (error) {
+      return reply.code(503).send({ error: error instanceof Error ? error.message : "agent_error" });
+    }
+  });
+
   app.get("/api/chats", async (request, reply) => {
     if (!requireAuth(db, request, reply)) return;
     const query = request.query as { agentId?: string; repoId?: string };
@@ -712,6 +756,14 @@ async function createApp(): Promise<FastifyInstance> {
         if (pending) {
           clearTimeout(pending.timer);
           gitRequests.delete(parsed.requestId);
+          pending.resolve(parsed);
+        }
+      }
+      if (parsed.type === "deploy.result") {
+        const pending = deployRequests.get(parsed.requestId);
+        if (pending) {
+          clearTimeout(pending.timer);
+          deployRequests.delete(parsed.requestId);
           pending.resolve(parsed);
         }
       }
