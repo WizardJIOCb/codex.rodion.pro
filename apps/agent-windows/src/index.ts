@@ -159,7 +159,8 @@ function connect() {
         const result = await currentRunner.run({
           config,
           job: message.job,
-          sendLog: (log) => send({ ...log, message: redact(log.message) })
+          sendLog: (log) => send({ ...log, message: redact(log.message) }),
+          sendProgress: (progress) => send({ ...progress, message: redact(progress.message) })
         });
         send({
           ...result,

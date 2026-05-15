@@ -75,14 +75,15 @@ type Log = {
   at: string;
 };
 
-const templates = [
-  "Почини тесты и кратко объясни изменения.",
-  "Сделай ревью проекта, найди риски и предложи минимальные правки.",
-  "Найди баг по описанию, исправь его и запусти проверки.",
-  "Сверстай экран аккуратно под мобильный UX.",
-  "Добавь тесты к измененному поведению.",
-  "Сделай минимальный рефакторинг без изменения публичного API."
-];
+type JobProgress = {
+  jobId: string;
+  phase: string;
+  message: string;
+  filesChanged?: number;
+  added?: number;
+  deleted?: number;
+  at: string;
+};
 
 function api(path: string, options: RequestInit = {}) {
   return fetch(path, {
@@ -113,6 +114,7 @@ function App() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [activeJob, setActiveJob] = useState<Job | null>(null);
   const [logs, setLogs] = useState<Log[]>([]);
+  const [progressByJob, setProgressByJob] = useState<Record<string, JobProgress>>({});
   const [prompt, setPrompt] = useState("");
   const [repoKey, setRepoKey] = useState("");
   const [activeChatId, setActiveChatId] = useState("");
@@ -128,6 +130,15 @@ function App() {
   const activeChat = useMemo(() => chats.find((chat) => chat.id === activeChatId), [activeChatId, chats]);
   const selectedAgent = agents.find((agent) => agent.status === "online") ?? agents[0];
   const online = agents.some((agent) => agent.status === "online");
+  const activeProgress = activeJob ? progressByJob[activeJob.id] ?? {
+    jobId: activeJob.id,
+    phase: activeJob.status,
+    message: activeJob.status === "running" ? "Codex is running." : `Job is ${activeJob.status}.`,
+    filesChanged: 0,
+    added: 0,
+    deleted: 0,
+    at: new Date().toISOString()
+  } : null;
 
   async function refresh() {
     const [agentResponse, repoResponse] = await Promise.all([api("/api/agents"), api("/api/repos")]);
@@ -228,6 +239,9 @@ function App() {
       const message = JSON.parse(event.data);
       if (message.type === "job.log") {
         setLogs((current) => (activeJob?.id === message.jobId ? [...current, message] : current));
+      }
+      if (message.type === "job.progress") {
+        setProgressByJob((current) => ({ ...current, [message.jobId]: message }));
       }
       if (["job.updated", "job.created", "agent.status", "repos.updated", "chats.updated"].includes(message.type)) {
         refresh();
@@ -464,11 +478,6 @@ function App() {
                       <button className={sandbox === item ? "active" : ""} key={item} type="button" onClick={() => setSandbox(item)}>{item}</button>
                     ))}
                   </div>
-                  <div className="chips">
-                    {templates.map((template) => (
-                      <button key={template} type="button" onClick={() => setPrompt(template)}>{template}</button>
-                    ))}
-                  </div>
                   <textarea placeholder={`Напиши задачу в чат "${activeChat.title}"...`} value={prompt} onChange={(event) => setPrompt(event.target.value)} />
                   <div className="sticky-submit">
                     <button disabled={busy || !prompt.trim()} type="submit"><Play size={18} /> Run Codex</button>
@@ -496,6 +505,19 @@ function App() {
                           <span className={`pill ${activeJob.status}`}><CheckCircle2 size={15} /> {activeJob.status}</span>
                           <strong>{activeJob.prompt}</strong>
                         </div>
+                        {activeProgress && (
+                          <div className="progress-panel">
+                            <div>
+                              <span className="progress-label">{activeProgress.phase}</span>
+                              <strong>{activeProgress.message}</strong>
+                            </div>
+                            <div className="progress-stats">
+                              <span>{activeProgress.filesChanged ?? 0} files</span>
+                              <span>+{activeProgress.added ?? 0}</span>
+                              <span>-{activeProgress.deleted ?? 0}</span>
+                            </div>
+                          </div>
+                        )}
                         <pre className="logs">{logs.map((line) => `[${line.stream}] ${line.message}`).join("\n") || "Waiting for logs..."}</pre>
                         <div className="results">
                           <h2>Git status</h2>

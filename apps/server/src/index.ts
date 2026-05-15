@@ -468,6 +468,10 @@ async function createApp(): Promise<FastifyInstance> {
         broadcast({ type: "job.updated", jobId: parsed.jobId, status: "running" });
         appendLog({ job_id: parsed.jobId, stream: parsed.stream, message: parsed.message, at: parsed.at });
       }
+      if (parsed.type === "job.progress") {
+        db.prepare("UPDATE jobs SET status='running', started_at=COALESCE(started_at, ?) WHERE id=?").run(nowIso(), parsed.jobId);
+        broadcast(parsed);
+      }
       if (parsed.type === "job.done") {
         db.prepare(`
           UPDATE jobs SET status=?, exit_code=?, final_message=?, git_status=?, git_diff_stat=?, git_diff=?, branch_name=?, finished_at=?

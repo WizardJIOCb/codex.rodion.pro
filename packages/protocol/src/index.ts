@@ -54,6 +54,17 @@ export const AgentJobLogSchema = z.object({
   at: z.string().datetime()
 });
 
+export const AgentJobProgressSchema = z.object({
+  type: z.literal("job.progress"),
+  jobId: z.string().min(1),
+  phase: z.string().min(1).max(80),
+  message: z.string().min(1).max(2000),
+  filesChanged: z.number().int().nonnegative().optional(),
+  added: z.number().int().nonnegative().optional(),
+  deleted: z.number().int().nonnegative().optional(),
+  at: z.string().datetime()
+});
+
 export const AgentJobDoneSchema = z.object({
   type: z.literal("job.done"),
   jobId: z.string().min(1),
@@ -78,6 +89,7 @@ export const AgentToServerSchema = z.discriminatedUnion("type", [
   AgentHelloSchema,
   AgentHeartbeatSchema,
   AgentJobLogSchema,
+  AgentJobProgressSchema,
   AgentJobDoneSchema,
   AgentProjectResultSchema
 ]);
@@ -174,6 +186,7 @@ export const UiEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("chats.updated"), agentId: z.string(), repoId: z.string() }),
   z.object({ type: z.literal("job.created"), jobId: z.string() }),
   z.object({ type: z.literal("job.updated"), jobId: z.string(), status: JobStatusSchema }),
+  AgentJobProgressSchema,
   AgentJobLogSchema
 ]);
 export type UiEvent = z.infer<typeof UiEventSchema>;

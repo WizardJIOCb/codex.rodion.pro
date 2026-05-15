@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import type { AgentJobDone, AgentJobLog } from "./types.js";
+import type { AgentJobDone, AgentJobLog, AgentJobProgress } from "./types.js";
 import type { AgentConfig, RepoConfig } from "./config.js";
 import { minimalEnv, runCapture } from "./process-utils.js";
 
@@ -15,6 +15,7 @@ type RunContext = {
     testCommandId?: string;
   };
   sendLog: (log: AgentJobLog) => void;
+  sendProgress: (progress: AgentJobProgress) => void;
 };
 
 export class Runner {
@@ -45,6 +46,7 @@ export class Runner {
     ];
     for (const line of lines) {
       if (this.cancelled) break;
+      context.sendProgress(progress(context.job.id, "fake", line, { filesChanged: 0, added: 0, deleted: 0 }));
       context.sendLog(log(context.job.id, "stdout", line));
       await new Promise((resolve) => setTimeout(resolve, 700));
     }
@@ -87,6 +89,7 @@ export class Runner {
   private spawnAndCollect(context: RunContext, repo: RepoConfig, command: string, args: string[], timeoutMs: number): Promise<AgentJobDone> {
     return new Promise((resolve) => {
       context.sendLog(log(context.job.id, "system", `Starting ${command} ${args.slice(0, 4).join(" ")} ...`));
+      context.sendProgress(progress(context.job.id, "starting", `Starting ${command}.`));
       this.child = spawn(command, args, {
         cwd: repo.path,
         shell: false,
@@ -95,21 +98,35 @@ export class Runner {
       });
       this.child.stdin.end();
       let finalMessage = "";
+      let progressBusy = false;
       const timer = setTimeout(() => {
         this.cancelled = true;
         this.child?.kill();
       }, timeoutMs);
+      const progressTimer = setInterval(async () => {
+        if (progressBusy) return;
+        progressBusy = true;
+        try {
+          const stats = await diffProgress(repo.path);
+          context.sendProgress(progress(context.job.id, "working", "Checking current git diff.", stats));
+        } finally {
+          progressBusy = false;
+        }
+      }, 4000);
       const emit = (stream: "stdout" | "stderr", chunk: Buffer) => {
         const text = chunk.toString();
         finalMessage = text.slice(-4000);
         for (const line of text.split(/\r?\n/).filter(Boolean)) {
+          if (stream === "stdout" && handleCodexJsonLine(context, line)) continue;
           context.sendLog(log(context.job.id, stream, line));
+          if (stream === "stderr") context.sendProgress(progress(context.job.id, "message", line.slice(0, 500)));
         }
       };
       this.child.stdout.on("data", (chunk: Buffer) => emit("stdout", chunk));
       this.child.stderr.on("data", (chunk: Buffer) => emit("stderr", chunk));
       this.child.on("error", (error) => {
         clearTimeout(timer);
+        clearInterval(progressTimer);
         resolve({
           type: "job.done",
           jobId: context.job.id,
@@ -120,9 +137,16 @@ export class Runner {
       });
       this.child.on("close", async (exitCode) => {
         clearTimeout(timer);
+        clearInterval(progressTimer);
         const gitStatus = await runCapture("git", ["-C", repo.path, "status", "--short"]);
         const gitDiffStat = await runCapture("git", ["-C", repo.path, "diff", "--stat"]);
         const gitDiff = await runCapture("git", ["-C", repo.path, "diff", "--", "."], undefined, 30000);
+        context.sendProgress(progress(
+          context.job.id,
+          this.cancelled ? "cancelled" : exitCode === 0 ? "completed" : "failed",
+          this.cancelled ? "Job cancelled." : exitCode === 0 ? "Codex finished." : "Codex process failed.",
+          await diffProgress(repo.path)
+        ));
         resolve({
           type: "job.done",
           jobId: context.job.id,
@@ -140,6 +164,86 @@ export class Runner {
 
 function log(jobId: string, stream: "stdout" | "stderr" | "system", message: string): AgentJobLog {
   return { type: "job.log", jobId, stream, message, at: new Date().toISOString() };
+}
+
+function progress(
+  jobId: string,
+  phase: string,
+  message: string,
+  stats?: { filesChanged: number; added: number; deleted: number }
+): AgentJobProgress {
+  return { type: "job.progress", jobId, phase, message, at: new Date().toISOString(), ...stats };
+}
+
+async function diffProgress(repoPath: string): Promise<{ filesChanged: number; added: number; deleted: number }> {
+  const result = await runCapture("git", ["-C", repoPath, "diff", "--numstat"], undefined, 15000);
+  let filesChanged = 0;
+  let added = 0;
+  let deleted = 0;
+  for (const line of result.stdout.split(/\r?\n/).filter(Boolean)) {
+    const [add, del] = line.split(/\s+/);
+    filesChanged += 1;
+    const addedNumber = Number(add);
+    const deletedNumber = Number(del);
+    if (Number.isFinite(addedNumber)) added += addedNumber;
+    if (Number.isFinite(deletedNumber)) deleted += deletedNumber;
+  }
+  return { filesChanged, added, deleted };
+}
+
+function handleCodexJsonLine(context: RunContext, line: string): boolean {
+  let event: unknown;
+  try {
+    event = JSON.parse(line);
+  } catch {
+    return false;
+  }
+  if (!event || typeof event !== "object") return false;
+  const item = "item" in event && event.item && typeof event.item === "object" ? event.item as Record<string, unknown> : undefined;
+  const type = "type" in event ? String(event.type) : "";
+
+  if (type === "thread.started") {
+    context.sendProgress(progress(context.job.id, "started", "Codex thread started."));
+    return true;
+  }
+  if (type === "turn.started") {
+    context.sendProgress(progress(context.job.id, "thinking", "Codex is thinking."));
+    return true;
+  }
+  if (type === "item.started" && item?.type === "command_execution") {
+    const command = typeof item.command === "string" ? item.command : "command";
+    const summary = summarizeCommand(command);
+    context.sendProgress(progress(context.job.id, "command", `Running: ${summary}`));
+    context.sendLog(log(context.job.id, "system", `Running: ${summary}`));
+    return true;
+  }
+  if (type === "item.completed" && item?.type === "agent_message") {
+    const text = typeof item.text === "string" ? item.text.trim() : "";
+    if (text) {
+      context.sendProgress(progress(context.job.id, "message", text.slice(0, 500)));
+      context.sendLog(log(context.job.id, "stdout", text));
+    }
+    return true;
+  }
+  if (type === "item.completed" && item?.type === "command_execution") {
+    const status = typeof item.status === "string" ? item.status : "completed";
+    const command = typeof item.command === "string" ? summarizeCommand(item.command) : "command";
+    const output = typeof item.aggregated_output === "string" ? item.aggregated_output.trim() : "";
+    context.sendProgress(progress(context.job.id, "command", `${command}: ${status}.`));
+    context.sendLog(log(context.job.id, status === "failed" ? "stderr" : "system", `${command}: ${status}.`));
+    if (output) context.sendLog(log(context.job.id, status === "failed" ? "stderr" : "stdout", output.slice(0, 4000)));
+    return true;
+  }
+
+  return true;
+}
+
+function summarizeCommand(command: string): string {
+  return command
+    .replace(/"C:\\Windows\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe"\s+-Command\s+/i, "")
+    .replace(/^powershell(?:\.exe)?\s+-Command\s+/i, "")
+    .replace(/\s+/g, " ")
+    .slice(0, 180);
 }
 
 function truncate(value: string, max: number): string {
