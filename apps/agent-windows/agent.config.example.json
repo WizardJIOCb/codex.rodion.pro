@@ -1,0 +1,34 @@
+{
+  "agentId": "home-windows",
+  "serverUrl": "ws://localhost:3000/api/agent/ws",
+  "tokenEnv": "CMC_AGENT_TOKEN",
+  "heartbeatIntervalMs": 20000,
+  "maxJobDurationMs": 3600000,
+  "cancelGraceMs": 5000,
+  "maxLogBytesPerJob": 10485760,
+  "fakeRunner": true,
+  "repos": [
+    {
+      "id": "codex-mobile-controller",
+      "name": "Codex Mobile Controller",
+      "path": "C:\\Projects\\codex.rodion.pro",
+      "defaultSandbox": "workspace-write",
+      "allowedSandboxes": ["read-only", "workspace-write"],
+      "testCommands": [
+        {
+          "id": "pnpm-build",
+          "label": "pnpm build",
+          "command": "pnpm",
+          "args": ["build"],
+          "timeoutMs": 900000
+        }
+      ]
+    }
+  ],
+  "redactPatterns": [
+    "sk-[A-Za-z0-9_-]+",
+    "ghp_[A-Za-z0-9_]+",
+    "OPENAI_API_KEY=\\S+",
+    "cmc_agent_[A-Za-z0-9_-]+"
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "name": "codex-mobile-controller",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.11.0",
+  "type": "module",
+  "scripts": {
+    "dev": "corepack pnpm -r --parallel dev",
+    "build": "corepack pnpm --filter @cmc/protocol build && corepack pnpm -r --filter ./apps/* build",
+    "typecheck": "corepack pnpm --filter @cmc/protocol build && corepack pnpm -r --filter ./apps/* typecheck",
+    "server:dev": "corepack pnpm --filter @cmc/server dev",
+    "web:dev": "corepack pnpm --filter @cmc/web dev",
+    "agent:dev": "corepack pnpm --filter @cmc/agent-windows dev",
+    "server:seed": "corepack pnpm --filter @cmc/server seed:user",
+    "server:agent": "corepack pnpm --filter @cmc/server agents:create"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.21",
+    "typescript": "^5.8.3"
+  }
+}

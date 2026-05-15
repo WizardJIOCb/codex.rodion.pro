@@ -1,0 +1,15 @@
+services:
+  server:
+    build:
+      context: ..
+      dockerfile: apps/server/Dockerfile
+    env_file:
+      - ../.env
+    volumes:
+      - cmc_data:/app/data
+    ports:
+      - "127.0.0.1:3000:3000"
+    restart: unless-stopped
+
+volumes:
+  cmc_data:

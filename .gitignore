@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+.env.local
+data/
+*.db
+*.db-shm
+*.db-wal
+apps/web/dist/
+apps/server/public/
+apps/agent-windows/agent.config.json
