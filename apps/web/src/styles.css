@@ -229,6 +229,7 @@ textarea:focus {
 .chat-work {
   display: grid;
   gap: 10px;
+  min-width: 0;
 }
 
 .project-grid {
@@ -301,15 +302,17 @@ textarea:focus {
 
 .project-workspace {
   display: grid;
-  grid-template-columns: 300px 1fr;
+  grid-template-columns: 300px minmax(0, 1fr);
   gap: 10px;
   align-items: start;
+  min-width: 0;
 }
 
 .chat-sidebar {
   display: grid;
   gap: 8px;
   align-content: start;
+  min-width: 0;
 }
 
 .new-chat {
@@ -442,9 +445,11 @@ label {
 
 .workspace {
   display: grid;
-  grid-template-columns: 320px 1fr;
+  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
   gap: 10px;
   align-items: start;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .history,
@@ -452,6 +457,7 @@ label {
   display: grid;
   gap: 8px;
   min-width: 0;
+  overflow: hidden;
 }
 
 h2 {
@@ -467,6 +473,7 @@ h2 {
   display: grid;
   gap: 4px;
   width: 100%;
+  min-width: 0;
   padding: 10px;
   text-align: left;
   color: #202123;
@@ -482,16 +489,22 @@ h2 {
 }
 
 .job span {
+  min-width: 0;
   line-height: 1.35;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .job small {
+  min-width: 0;
   color: #6e6e80;
+  overflow-wrap: anywhere;
 }
 
 .job-head {
   display: grid;
   gap: 6px;
+  min-width: 0;
   padding: 10px;
   border: 1px solid #d9d9e3;
   border-radius: 6px;
@@ -504,6 +517,7 @@ h2 {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  min-width: 0;
   padding: 10px;
   border: 1px solid #d9d9e3;
   border-radius: 6px;
@@ -517,8 +531,10 @@ h2 {
 }
 
 .progress-panel strong {
+  min-width: 0;
   font-size: 13px;
   line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .progress-label {
@@ -583,6 +599,8 @@ pre {
 .results pre,
 .empty {
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   padding: 10px;
   border-radius: 6px;
   color: #202123;
@@ -603,6 +621,7 @@ pre {
 .results {
   display: grid;
   gap: 8px;
+  min-width: 0;
 }
 
 .results pre {
