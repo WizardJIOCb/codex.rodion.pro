@@ -98,6 +98,7 @@ export class Runner {
       });
       this.child.stdin.end();
       let finalMessage = "";
+      let rawOutputTail = "";
       let codexThreadId: string | undefined;
       let progressBusy = false;
       const timer = setTimeout(() => {
@@ -116,7 +117,6 @@ export class Runner {
       }, 4000);
       const emit = (stream: "stdout" | "stderr", chunk: Buffer) => {
         const text = chunk.toString();
-        finalMessage = text.slice(-4000);
         for (const line of text.split(/\r?\n/).filter(Boolean)) {
           if (stream === "stdout") {
             const handled = handleCodexJsonLine(context, line);
@@ -126,6 +126,7 @@ export class Runner {
               continue;
             }
           }
+          rawOutputTail = `${rawOutputTail}\n${line}`.slice(-4000);
           context.sendLog(log(context.job.id, stream, line));
           if (stream === "stderr") context.sendProgress(progress(context.job.id, "message", line.slice(0, 500)));
         }
@@ -160,7 +161,7 @@ export class Runner {
           jobId: context.job.id,
           status: this.cancelled ? "cancelled" : exitCode === 0 ? "completed" : "failed",
           exitCode,
-          finalMessage: finalMessage || (exitCode === 0 ? "Completed." : "Process failed."),
+          finalMessage: finalMessage || rawOutputTail.trim() || (exitCode === 0 ? "Completed." : "Process failed."),
           gitStatus: gitStatus.stdout,
           gitDiffStat: gitDiffStat.stdout,
           gitDiff: truncate(gitDiff.stdout, 120000),
