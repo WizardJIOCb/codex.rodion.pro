@@ -252,9 +252,25 @@ function upsertSyncedChat(agentId: string, sync: Extract<AgentToServer, { type: 
   const repo = db.prepare("SELECT * FROM repos WHERE agent_id = ? AND id = ?").get(agentId, sync.repoId) as RepoRow | undefined;
   if (!repo) return;
   const stamp = nowIso();
+  const linkedChat = sync.source === "codex"
+    ? db.prepare(`
+      SELECT c.* FROM jobs j
+      JOIN chats c ON c.id = j.chat_id
+      WHERE j.agent_id = ? AND j.repo_id = ? AND j.codex_thread_id = ?
+      ORDER BY COALESCE(j.finished_at, j.started_at, j.created_at) DESC
+      LIMIT 1
+    `).get(agentId, sync.repoId, sync.externalId) as ChatRow | undefined
+    : undefined;
   let chat = db.prepare("SELECT * FROM chats WHERE agent_id = ? AND source = ? AND external_id = ?")
     .get(agentId, sync.source, sync.externalId) as ChatRow | undefined;
-  if (chat) {
+  if (linkedChat) {
+    if (chat && chat.id !== linkedChat.id) {
+      db.prepare("DELETE FROM chats WHERE id = ?").run(chat.id);
+    }
+    chat = linkedChat;
+    db.prepare("UPDATE chats SET cwd=COALESCE(cwd, ?), updated_at=? WHERE id=?")
+      .run(sync.cwd ?? null, sync.updatedAt, chat.id);
+  } else if (chat) {
     db.prepare("UPDATE chats SET repo_id=?, title=?, cwd=?, updated_at=? WHERE id=?")
       .run(sync.repoId, sync.title, sync.cwd ?? null, sync.updatedAt, chat.id);
   } else {
@@ -272,6 +288,9 @@ function upsertSyncedChat(agentId: string, sync: Extract<AgentToServer, { type: 
       db.prepare("UPDATE chat_messages SET role=?, content=?, metadata_json=?, created_at=? WHERE id=?")
         .run(message.role, message.content.slice(0, 200000), message.metadata ? JSON.stringify(message.metadata) : null, message.createdAt, existing.id);
     } else {
+      const duplicate = db.prepare("SELECT id FROM chat_messages WHERE chat_id = ? AND role = ? AND content = ? LIMIT 1")
+        .get(chat.id, message.role, message.content.slice(0, 200000)) as { id: string } | undefined;
+      if (duplicate) continue;
       db.prepare("INSERT INTO chat_messages (id,chat_id,role,content,source,external_id,metadata_json,created_at) VALUES (?,?,?,?,?,?,?,?)")
         .run(message.id ?? id("msg"), chat.id, message.role, message.content.slice(0, 200000), message.source, message.externalId ?? null, message.metadata ? JSON.stringify(message.metadata) : null, message.createdAt);
     }

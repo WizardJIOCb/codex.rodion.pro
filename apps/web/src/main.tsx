@@ -147,10 +147,6 @@ function diffRows(stat: string | null) {
     .slice(0, 8);
 }
 
-function messagePreview(value: string) {
-  return value.length > 140 ? `${value.slice(0, 140)}...` : value;
-}
-
 function App() {
   const [csrf, setCsrf] = useState<string>();
   const [email, setEmail] = useState("");
@@ -209,11 +205,15 @@ function App() {
     }
   }
 
-  async function loadChats(repo: Repo) {
+  async function loadChats(repo: Repo, selectFirst = false) {
     const response = await api(`/api/chats?agentId=${encodeURIComponent(repo.agentId)}&repoId=${encodeURIComponent(repo.id)}`);
     if (!response.ok) return;
     const nextChats = (await response.json()).chats;
     setChats(nextChats);
+    if (selectFirst && nextChats[0]) {
+      await loadChat(nextChats[0].id);
+      return;
+    }
     if (activeChatId && !nextChats.some((chat: Chat) => chat.id === activeChatId)) {
       setActiveChatId("");
       setJobs([]);
@@ -258,7 +258,7 @@ function App() {
     setActiveJob(null);
     setLogs([]);
     setProjectPanel(null);
-    loadChats(repo);
+    loadChats(repo, true);
   }
 
   function clearProjectSelection() {
@@ -394,15 +394,33 @@ function App() {
 
   async function createJob(event: React.FormEvent) {
     event.preventDefault();
-    if (!selectedRepo || !activeChatId || !prompt.trim() || !csrf) return;
+    if (!selectedRepo || !prompt.trim() || !csrf) return;
+    let targetChatId = activeChatId;
     setBusy(true);
+    if (!targetChatId) {
+      const chatResponse = await api("/api/chats", {
+        method: "POST",
+        headers: { "x-csrf-token": csrf },
+        body: JSON.stringify({
+          agentId: selectedRepo.agentId,
+          repoId: selectedRepo.id,
+          title: prompt.trim().slice(0, 120)
+        })
+      });
+      if (!chatResponse.ok) {
+        setBusy(false);
+        return;
+      }
+      targetChatId = (await chatResponse.json()).chatId;
+      setActiveChatId(targetChatId);
+    }
     const response = await api("/api/jobs", {
       method: "POST",
       headers: { "x-csrf-token": csrf },
       body: JSON.stringify({
         agentId: selectedRepo.agentId,
         repoId: selectedRepo.id,
-        chatId: activeChatId,
+        chatId: targetChatId,
         prompt,
         sandbox,
         branchMode: "current"
@@ -413,7 +431,7 @@ function App() {
     const { jobId } = await response.json();
     setPrompt("");
     await loadJob(jobId);
-    await loadChat(activeChatId);
+    await loadChat(targetChatId);
   }
 
   async function cancelJob() {
@@ -491,7 +509,26 @@ function App() {
   }
 
   return (
-    <main className="shell">
+    <main className="app-frame">
+      <aside className="app-nav">
+        <div className="nav-brand">
+          <div className="brand-mark small"><Bot size={20} /></div>
+          <strong>codex.rodion.pro</strong>
+        </div>
+        <nav>
+          <button className="nav-item active"><MessageSquare size={17} /> Chat</button>
+          <button className="nav-item" onClick={clearProjectSelection}><FolderGit2 size={17} /> Projects</button>
+          <button className="nav-item"><Activity size={17} /> Runs</button>
+          <button className="nav-item"><Settings size={17} /> Settings</button>
+        </nav>
+        <div className="nav-agent">
+          <span>{online ? "Online" : "Offline"}</span>
+          <strong>{selectedAgent?.name ?? "Home Windows Agent"}</strong>
+          <small>{selectedAgent?.hostname ?? "Waiting for heartbeat"}</small>
+        </div>
+      </aside>
+
+      <section className="shell">
       <header className="topbar">
         <div>
           <span className={`status ${online ? "ok" : "bad"}`}>{online ? <Wifi size={16} /> : <WifiOff size={16} />} {online ? "Home PC online" : "Home PC offline"}</span>
@@ -612,23 +649,23 @@ function App() {
               {gitNotice && <pre>{gitNotice}</pre>}
               {deployNotice && <pre>{deployNotice}</pre>}
             </form>
+            <form className="composer" onSubmit={createJob}>
+              <div className="segments">
+                {selectedRepo.allowedSandboxes.map((item) => (
+                  <button className={sandbox === item ? "active" : ""} key={item} type="button" onClick={() => setSandbox(item)}>{SANDBOX_LABELS[item]}</button>
+                ))}
+              </div>
+              <textarea placeholder={activeChat ? `Напиши следующую задачу в чат "${activeChat.title}"...` : "Напиши первую задачу, чат создастся автоматически..."} value={prompt} onChange={(event) => setPrompt(event.target.value)} />
+              <div className="sticky-submit">
+                <button disabled={busy || !prompt.trim()} type="submit"><Play size={18} /> Run Codex</button>
+                {activeJob && ["queued", "assigned", "running"].includes(activeJob.status) && (
+                  <button className="stop" type="button" onClick={cancelJob}><Square size={18} /> Stop</button>
+                )}
+              </div>
+            </form>
+
             {activeChat ? (
               <>
-                <form className="composer" onSubmit={createJob}>
-                  <div className="segments">
-                    {selectedRepo.allowedSandboxes.map((item) => (
-                      <button className={sandbox === item ? "active" : ""} key={item} type="button" onClick={() => setSandbox(item)}>{SANDBOX_LABELS[item]}</button>
-                    ))}
-                  </div>
-                  <textarea placeholder={`Напиши задачу в чат "${activeChat.title}"...`} value={prompt} onChange={(event) => setPrompt(event.target.value)} />
-                  <div className="sticky-submit">
-                    <button disabled={busy || !prompt.trim()} type="submit"><Play size={18} /> Run Codex</button>
-                    {activeJob && ["queued", "assigned", "running"].includes(activeJob.status) && (
-                      <button className="stop" type="button" onClick={cancelJob}><Square size={18} /> Stop</button>
-                    )}
-                  </div>
-                </form>
-
                 <section className="workspace">
                   <aside className="history">
                     <h2><Activity size={18} /> Jobs</h2>
@@ -648,7 +685,7 @@ function App() {
                             <span>{message.role === "user" ? "You" : message.source === "vscode" ? "VS Code" : "Codex"}</span>
                             <small>{new Date(message.createdAt).toLocaleString()}</small>
                           </div>
-                          <p>{messagePreview(message.content)}</p>
+                          <p>{message.content}</p>
                         </article>
                       )) : (
                         <div className="empty">Start this chat or wait for local Codex/VS Code history sync.</div>
@@ -704,11 +741,46 @@ function App() {
                 </section>
               </>
             ) : (
-              <div className="empty">Выбери чат проекта или создай новый.</div>
+              <div className="empty">Нет выбранного чата. Первое сообщение создаст чат, следующие продолжат его.</div>
             )}
           </section>
         </section>
       )}
+      </section>
+
+      <aside className="agent-console">
+        <section className="agent-card">
+          <div className="section-head">
+            <h2><Bot size={18} /> Home Windows Agent</h2>
+            <span className={`status ${online ? "ok" : "bad"}`}>{online ? "Online" : "Offline"}</span>
+          </div>
+          <div className="metric-grid">
+            <div><span>Queue</span><strong>{jobs.filter((job) => ["queued", "assigned", "running"].includes(job.status)).length}</strong></div>
+            <div><span>Mode</span><strong>{SANDBOX_LABELS[sandbox]}</strong></div>
+            <div><span>Branch</span><strong>{selectedRepo?.currentBranch ?? "n/a"}</strong></div>
+          </div>
+          <div className="agent-rules">
+            <span>Filesystem Access <strong>{sandbox === "danger-full-access" ? "Full" : "Scoped"}</strong></span>
+            <span>Network Access <strong>{sandbox === "danger-full-access" ? "Enabled" : "Restricted"}</strong></span>
+            <span>Auto Deploy <strong>{selectedRepo?.serverPath ? "Ready" : "Not set"}</strong></span>
+          </div>
+        </section>
+
+        <section className="agent-card">
+          <div className="section-head">
+            <h2><Activity size={18} /> Recent Runs</h2>
+          </div>
+          <div className="compact-runs">
+            {jobs.slice(0, 6).map((job) => (
+              <button className="compact-run" key={job.id} onClick={() => loadJob(job.id)}>
+                <span>{job.prompt.slice(0, 56)}</span>
+                <small className={job.status}>{job.status}</small>
+              </button>
+            ))}
+            {!jobs.length && <div className="empty small-empty">No runs in selected chat.</div>}
+          </div>
+        </section>
+      </aside>
     </main>
   );
 }
