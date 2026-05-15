@@ -206,6 +206,150 @@ textarea:focus {
   text-align: right;
 }
 
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.project-picker,
+.project-form,
+.chat-sidebar,
+.chat-work {
+  padding: 12px;
+  border-radius: 6px;
+  background: #ffffff;
+  border: 1px solid #d9d9e3;
+  box-shadow: 0 1px 2px rgba(32, 33, 35, 0.04);
+}
+
+.project-picker,
+.project-form,
+.chat-work {
+  display: grid;
+  gap: 10px;
+}
+
+.project-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 8px;
+}
+
+.project-card {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: stretch;
+  gap: 6px;
+  min-width: 0;
+}
+
+.project-main {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 10px;
+  text-align: left;
+  color: #202123;
+  background: #f7f7f8;
+  border: 1px solid #d9d9e3;
+  border-radius: 6px;
+}
+
+.project-main span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #353740;
+  font-size: 12px;
+}
+
+.project-main small {
+  color: #6e6e80;
+  overflow-wrap: anywhere;
+}
+
+.project-form {
+  max-width: 760px;
+}
+
+.project-form button[type="submit"],
+.secondary,
+.new-chat button {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  font-weight: 800;
+}
+
+.project-form button[type="submit"],
+.new-chat button {
+  color: #ffffff;
+  background: #10a37f;
+}
+
+.secondary {
+  color: #353740;
+  background: #f7f7f8;
+  border: 1px solid #d9d9e3;
+}
+
+.project-workspace {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  gap: 10px;
+  align-items: start;
+}
+
+.chat-sidebar {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.new-chat {
+  display: grid;
+  grid-template-columns: 1fr 38px;
+  gap: 6px;
+}
+
+.chat-list {
+  display: grid;
+  gap: 6px;
+}
+
+.chat {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  padding: 9px;
+  text-align: left;
+  color: #202123;
+  background: #ffffff;
+  border: 1px solid #d9d9e3;
+  border-radius: 6px;
+}
+
+.chat.active {
+  border-color: #10a37f;
+  box-shadow: 0 0 0 3px rgba(16, 163, 127, 0.12);
+}
+
+.chat small {
+  color: #6e6e80;
+}
+
+.tiny {
+  width: 38px;
+  height: auto;
+  min-height: 38px;
+}
+
 .composer {
   padding: 12px;
   border-radius: 6px;
@@ -449,6 +593,10 @@ button:disabled {
   }
 
   .workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .project-workspace {
     grid-template-columns: 1fr;
   }
 

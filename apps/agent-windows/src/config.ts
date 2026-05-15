@@ -1,4 +1,4 @@
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { z } from "zod";
 
@@ -32,19 +32,24 @@ const AgentConfigSchema = z.object({
   redactPatterns: z.array(z.string()).default([])
 });
 
-export type AgentConfig = z.infer<typeof AgentConfigSchema>;
+export type AgentConfig = z.infer<typeof AgentConfigSchema> & { configPath: string };
 export type RepoConfig = AgentConfig["repos"][number];
 export type TestCommand = RepoConfig["testCommands"][number];
 
 export function loadAgentConfig(): AgentConfig {
   const argIndex = process.argv.findIndex((arg) => arg === "--config");
   const fromArg = argIndex >= 0 ? process.argv[argIndex + 1] : undefined;
-  const path = resolve(process.cwd(), process.env.CMC_AGENT_CONFIG ?? fromArg ?? "apps/agent-windows/agent.config.json");
-  if (!existsSync(path)) throw new Error(`Agent config not found: ${path}`);
-  const raw = readFileSync(path, "utf8").replace(/^\uFEFF/, "");
+  const configPath = resolve(process.cwd(), process.env.CMC_AGENT_CONFIG ?? fromArg ?? "apps/agent-windows/agent.config.json");
+  if (!existsSync(configPath)) throw new Error(`Agent config not found: ${configPath}`);
+  const raw = readFileSync(configPath, "utf8").replace(/^\uFEFF/, "");
   const parsed = AgentConfigSchema.parse(JSON.parse(raw));
   for (const repo of parsed.repos) {
     if (!existsSync(repo.path)) throw new Error(`Repo path does not exist: ${repo.path}`);
   }
-  return parsed;
+  return { ...parsed, configPath };
+}
+
+export function saveAgentConfig(config: AgentConfig): void {
+  const { configPath, ...persisted } = config;
+  writeFileSync(configPath, `${JSON.stringify(persisted, null, 2)}\n`, "utf8");
 }

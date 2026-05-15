@@ -1,7 +1,8 @@
 import os from "node:os";
+import { mkdirSync } from "node:fs";
 import WebSocket from "ws";
 import { ServerToAgentSchema, type AgentToServer, type ServerToAgent } from "@cmc/protocol";
-import { loadAgentConfig } from "./config.js";
+import { loadAgentConfig, saveAgentConfig } from "./config.js";
 import { Runner } from "./codex-runner.js";
 import { runCapture } from "./process-utils.js";
 import { makeRedactor } from "./redact.js";
@@ -14,6 +15,30 @@ if (!token) throw new Error(`Missing agent token env var: ${config.tokenEnv}`);
 
 let currentRunner: Runner | null = null;
 let currentJobId: string | undefined;
+
+async function ensureGitRepo(path: string): Promise<void> {
+  mkdirSync(path, { recursive: true });
+  const probe = await runCapture("git", ["-C", path, "rev-parse", "--is-inside-work-tree"], undefined, 15000);
+  if (probe.exitCode !== 0 || probe.stdout.trim() !== "true") {
+    const init = await runCapture("git", ["-C", path, "init"], undefined, 30000);
+    if (init.exitCode !== 0) throw new Error(init.stderr || "git init failed");
+  }
+}
+
+async function sendProjectResult(
+  send: (message: AgentToServer) => void,
+  requestId: string,
+  ok: boolean,
+  error?: string
+) {
+  send({
+    type: "project.result",
+    requestId,
+    ok,
+    error,
+    repos: ok ? await scanRepos(config) : undefined
+  });
+}
 
 async function toolVersion(command: string, args = ["--version"]): Promise<string | undefined> {
   const result = await runCapture(command, args, undefined, 15000);
@@ -74,6 +99,46 @@ function connect() {
 
     if (message.type === "job.cancel") {
       if (message.jobId === currentJobId) currentRunner?.cancel();
+      return;
+    }
+
+    if (message.type === "project.create") {
+      try {
+        if (config.repos.some((repo) => repo.id === message.project.id)) throw new Error("Project id already exists.");
+        await ensureGitRepo(message.project.path);
+        config.repos.push({
+          id: message.project.id,
+          name: message.project.name,
+          path: message.project.path,
+          defaultSandbox: message.project.defaultSandbox,
+          allowedSandboxes: message.project.allowedSandboxes,
+          testCommands: []
+        });
+        saveAgentConfig(config);
+        await sendProjectResult(send, message.requestId, true);
+      } catch (error) {
+        await sendProjectResult(send, message.requestId, false, error instanceof Error ? error.message : String(error));
+      }
+      return;
+    }
+
+    if (message.type === "project.update") {
+      try {
+        const repo = config.repos.find((item) => item.id === message.repoId);
+        if (!repo) throw new Error("Project not found in agent config.");
+        if (message.patch.path) {
+          await ensureGitRepo(message.patch.path);
+          repo.path = message.patch.path;
+        }
+        if (message.patch.name) repo.name = message.patch.name;
+        if (message.patch.defaultSandbox) repo.defaultSandbox = message.patch.defaultSandbox;
+        if (message.patch.allowedSandboxes) repo.allowedSandboxes = message.patch.allowedSandboxes;
+        if (!repo.allowedSandboxes.includes(repo.defaultSandbox)) repo.defaultSandbox = repo.allowedSandboxes[0] ?? "read-only";
+        saveAgentConfig(config);
+        await sendProjectResult(send, message.requestId, true);
+      } catch (error) {
+        await sendProjectResult(send, message.requestId, false, error instanceof Error ? error.message : String(error));
+      }
       return;
     }
 

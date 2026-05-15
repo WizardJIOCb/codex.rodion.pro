@@ -1,6 +1,23 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Activity, Bot, CheckCircle2, GitBranch, LogOut, Play, RefreshCw, Square, Wifi, WifiOff } from "lucide-react";
+import {
+  Activity,
+  ArrowLeft,
+  Bot,
+  CheckCircle2,
+  FolderGit2,
+  GitBranch,
+  LogOut,
+  MessageSquare,
+  Play,
+  Plus,
+  RefreshCw,
+  Save,
+  Settings,
+  Square,
+  Wifi,
+  WifiOff
+} from "lucide-react";
 import "./styles.css";
 
 type Agent = {
@@ -8,8 +25,6 @@ type Agent = {
   name: string;
   hostname?: string;
   status: "online" | "offline";
-  current_job_id?: string;
-  last_seen_at?: string;
   codex_version?: string;
   git_version?: string;
 };
@@ -26,8 +41,18 @@ type Repo = {
   testCommands: Array<{ id: string; label: string }>;
 };
 
+type Chat = {
+  id: string;
+  agentId: string;
+  repoId: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 type Job = {
   id: string;
+  chatId?: string | null;
   agentId: string;
   repoId: string;
   prompt: string;
@@ -52,8 +77,8 @@ type Log = {
 
 const templates = [
   "Почини тесты и кратко объясни изменения.",
-  "Сделай ревью текущего проекта, найди риски и предложи минимальные правки.",
-  "Найди баг по описанию, исправь его и запусти подходящие проверки.",
+  "Сделай ревью проекта, найди риски и предложи минимальные правки.",
+  "Найди баг по описанию, исправь его и запусти проверки.",
   "Сверстай экран аккуратно под мобильный UX.",
   "Добавь тесты к измененному поведению.",
   "Сделай минимальный рефакторинг без изменения публичного API."
@@ -69,38 +94,76 @@ function api(path: string, options: RequestInit = {}) {
   });
 }
 
+function defaultProjectPath(name: string) {
+  const slug = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9а-яё]+/gi, "-")
+    .replace(/^-+|-+$/g, "");
+  return `C:\\Projects\\${slug || "new-project"}`;
+}
+
 function App() {
   const [csrf, setCsrf] = useState<string>();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [agents, setAgents] = useState<Agent[]>([]);
   const [repos, setRepos] = useState<Repo[]>([]);
+  const [chats, setChats] = useState<Chat[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [activeJob, setActiveJob] = useState<Job | null>(null);
   const [logs, setLogs] = useState<Log[]>([]);
   const [prompt, setPrompt] = useState("");
   const [repoKey, setRepoKey] = useState("");
+  const [activeChatId, setActiveChatId] = useState("");
   const [sandbox, setSandbox] = useState<"read-only" | "workspace-write">("workspace-write");
   const [busy, setBusy] = useState(false);
+  const [projectPanel, setProjectPanel] = useState<"new" | "settings" | null>(null);
+  const [projectName, setProjectName] = useState("");
+  const [projectPath, setProjectPath] = useState("");
+  const [chatTitle, setChatTitle] = useState("");
 
   const selectedRepo = useMemo(() => repos.find((repo) => `${repo.agentId}:${repo.id}` === repoKey), [repoKey, repos]);
+  const activeChat = useMemo(() => chats.find((chat) => chat.id === activeChatId), [activeChatId, chats]);
+  const selectedAgent = agents.find((agent) => agent.status === "online") ?? agents[0];
+  const online = agents.some((agent) => agent.status === "online");
 
   async function refresh() {
-    const [agentResponse, repoResponse, jobResponse] = await Promise.all([
-      api("/api/agents"),
-      api("/api/repos"),
-      api("/api/jobs")
-    ]);
+    const [agentResponse, repoResponse] = await Promise.all([api("/api/agents"), api("/api/repos")]);
     if (agentResponse.ok) setAgents((await agentResponse.json()).agents);
     if (repoResponse.ok) {
       const nextRepos = (await repoResponse.json()).repos;
       setRepos(nextRepos);
-      if (!repoKey && nextRepos[0]) {
-        setRepoKey(`${nextRepos[0].agentId}:${nextRepos[0].id}`);
-        setSandbox(nextRepos[0].defaultSandbox);
+      if (repoKey && !nextRepos.some((repo: Repo) => `${repo.agentId}:${repo.id}` === repoKey)) {
+        clearProjectSelection();
       }
     }
-    if (jobResponse.ok) setJobs((await jobResponse.json()).jobs);
+  }
+
+  async function loadChats(repo: Repo) {
+    const response = await api(`/api/chats?agentId=${encodeURIComponent(repo.agentId)}&repoId=${encodeURIComponent(repo.id)}`);
+    if (!response.ok) return;
+    const nextChats = (await response.json()).chats;
+    setChats(nextChats);
+    if (activeChatId && !nextChats.some((chat: Chat) => chat.id === activeChatId)) {
+      setActiveChatId("");
+      setJobs([]);
+      setActiveJob(null);
+      setLogs([]);
+    }
+  }
+
+  async function loadChat(chatId: string) {
+    const response = await api(`/api/chats/${chatId}`);
+    if (!response.ok) return;
+    const data = await response.json();
+    setActiveChatId(chatId);
+    setJobs(data.jobs);
+    if (data.jobs[0]) await loadJob(data.jobs[0].id);
+    else {
+      setActiveJob(null);
+      setLogs([]);
+    }
   }
 
   async function loadJob(jobId: string) {
@@ -109,6 +172,40 @@ function App() {
     const data = await response.json();
     setActiveJob(data.job);
     setLogs(data.logs);
+  }
+
+  function selectProject(repo: Repo) {
+    setRepoKey(`${repo.agentId}:${repo.id}`);
+    setSandbox(repo.defaultSandbox);
+    setActiveChatId("");
+    setJobs([]);
+    setActiveJob(null);
+    setLogs([]);
+    setProjectPanel(null);
+    loadChats(repo);
+  }
+
+  function clearProjectSelection() {
+    setRepoKey("");
+    setChats([]);
+    setActiveChatId("");
+    setJobs([]);
+    setActiveJob(null);
+    setLogs([]);
+    setProjectPanel(null);
+  }
+
+  function openNewProject() {
+    setProjectName("New Project");
+    setProjectPath(defaultProjectPath("New Project"));
+    setProjectPanel("new");
+  }
+
+  function openProjectSettings(repo: Repo) {
+    setProjectName(repo.name);
+    setProjectPath(repo.pathMasked);
+    setSandbox(repo.defaultSandbox);
+    setProjectPanel("settings");
   }
 
   useEffect(() => {
@@ -129,13 +226,15 @@ function App() {
       if (message.type === "job.log") {
         setLogs((current) => (activeJob?.id === message.jobId ? [...current, message] : current));
       }
-      if (["job.updated", "job.created", "agent.status", "repos.updated"].includes(message.type)) {
+      if (["job.updated", "job.created", "agent.status", "repos.updated", "chats.updated"].includes(message.type)) {
         refresh();
+        if (selectedRepo && message.type === "chats.updated" && message.repoId === selectedRepo.id) loadChats(selectedRepo);
         if (message.jobId && activeJob?.id === message.jobId) loadJob(message.jobId);
+        if (activeChatId) loadChat(activeChatId);
       }
     };
     return () => ws.close();
-  }, [csrf, activeJob?.id]);
+  }, [csrf, activeJob?.id, activeChatId, selectedRepo?.id]);
 
   useEffect(() => {
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => undefined);
@@ -155,9 +254,53 @@ function App() {
     refresh();
   }
 
+  async function saveProject(event: React.FormEvent) {
+    event.preventDefault();
+    if (!csrf || !selectedAgent || !projectName.trim() || !projectPath.trim()) return;
+    setBusy(true);
+    const isNew = projectPanel === "new";
+    const response = await api(isNew ? "/api/projects" : `/api/projects/${selectedRepo?.agentId}/${selectedRepo?.id}`, {
+      method: isNew ? "POST" : "PUT",
+      headers: { "x-csrf-token": csrf },
+      body: JSON.stringify({
+        agentId: selectedAgent.id,
+        name: projectName.trim(),
+        path: projectPath.trim(),
+        defaultSandbox: sandbox,
+        allowedSandboxes: ["read-only", "workspace-write"]
+      })
+    });
+    setBusy(false);
+    if (!response.ok) return;
+    const data = await response.json();
+    await refresh();
+    setProjectPanel(null);
+    if (isNew && data.repoId) {
+      setRepoKey(`${selectedAgent.id}:${data.repoId}`);
+      setSandbox("workspace-write");
+    }
+  }
+
+  async function createChat(event: React.FormEvent) {
+    event.preventDefault();
+    if (!selectedRepo || !csrf || !chatTitle.trim()) return;
+    setBusy(true);
+    const response = await api("/api/chats", {
+      method: "POST",
+      headers: { "x-csrf-token": csrf },
+      body: JSON.stringify({ agentId: selectedRepo.agentId, repoId: selectedRepo.id, title: chatTitle.trim() })
+    });
+    setBusy(false);
+    if (!response.ok) return;
+    const { chatId } = await response.json();
+    setChatTitle("");
+    await loadChats(selectedRepo);
+    await loadChat(chatId);
+  }
+
   async function createJob(event: React.FormEvent) {
     event.preventDefault();
-    if (!selectedRepo || !prompt.trim() || !csrf) return;
+    if (!selectedRepo || !activeChatId || !prompt.trim() || !csrf) return;
     setBusy(true);
     const response = await api("/api/jobs", {
       method: "POST",
@@ -165,6 +308,7 @@ function App() {
       body: JSON.stringify({
         agentId: selectedRepo.agentId,
         repoId: selectedRepo.id,
+        chatId: activeChatId,
         prompt,
         sandbox,
         branchMode: "current"
@@ -175,7 +319,7 @@ function App() {
     const { jobId } = await response.json();
     setPrompt("");
     await loadJob(jobId);
-    await refresh();
+    await loadChat(activeChatId);
   }
 
   async function cancelJob() {
@@ -209,16 +353,15 @@ function App() {
     );
   }
 
-  const online = agents.some((agent) => agent.status === "online");
-
   return (
     <main className="shell">
       <header className="topbar">
         <div>
           <span className={`status ${online ? "ok" : "bad"}`}>{online ? <Wifi size={16} /> : <WifiOff size={16} />} {online ? "Home PC online" : "Home PC offline"}</span>
-          <h1>Codex Control</h1>
+          <h1>{selectedRepo ? selectedRepo.name : "Projects"}</h1>
         </div>
         <div className="top-actions">
+          {selectedRepo && <button className="icon" onClick={clearProjectSelection} title="Проекты"><ArrowLeft size={18} /></button>}
           <button className="icon" onClick={refresh} title="Обновить"><RefreshCw size={18} /></button>
           <button className="icon" onClick={logout} title="Выйти"><LogOut size={18} /></button>
         </div>
@@ -234,78 +377,143 @@ function App() {
         ))}
       </section>
 
-      <form className="composer" onSubmit={createJob}>
-        <label>
-          Проект
-          <select value={repoKey} onChange={(event) => {
-            setRepoKey(event.target.value);
-            const repo = repos.find((item) => `${item.agentId}:${item.id}` === event.target.value);
-            if (repo) setSandbox(repo.defaultSandbox);
-          }}>
-            {repos.map((repo) => (
-              <option key={`${repo.agentId}:${repo.id}`} value={`${repo.agentId}:${repo.id}`}>
-                {repo.name} {repo.currentBranch ? `· ${repo.currentBranch}` : ""}
-              </option>
-            ))}
-          </select>
-        </label>
-        {selectedRepo && (
-          <div className="repo-meta">
-            <GitBranch size={16} /> {selectedRepo.currentBranch || "no branch"} · {selectedRepo.dirty ? "dirty" : "clean"} · {selectedRepo.pathMasked}
+      {!selectedRepo && (
+        <section className="project-picker">
+          <div className="section-head">
+            <h2><FolderGit2 size={18} /> Projects</h2>
+            <button className="secondary" onClick={openNewProject}><Plus size={16} /> Add project</button>
           </div>
-        )}
-        <div className="segments">
-          {selectedRepo?.allowedSandboxes.map((item) => (
-            <button className={sandbox === item ? "active" : ""} key={item} type="button" onClick={() => setSandbox(item)}>{item}</button>
-          ))}
-        </div>
-        <div className="chips">
-          {templates.map((template) => (
-            <button key={template} type="button" onClick={() => setPrompt(template)}>{template}</button>
-          ))}
-        </div>
-        <textarea placeholder="Напиши Codex задачу для выбранного проекта..." value={prompt} onChange={(event) => setPrompt(event.target.value)} />
-        <div className="sticky-submit">
-          <button disabled={busy || !selectedRepo || !prompt.trim()} type="submit"><Play size={18} /> Run Codex</button>
-          {activeJob && ["queued", "assigned", "running"].includes(activeJob.status) && (
-            <button className="stop" type="button" onClick={cancelJob}><Square size={18} /> Stop</button>
-          )}
-        </div>
-      </form>
-
-      <section className="workspace">
-        <aside className="history">
-          <h2><Activity size={18} /> Jobs</h2>
-          {jobs.map((job) => (
-            <button className={activeJob?.id === job.id ? "job active" : "job"} key={job.id} onClick={() => loadJob(job.id)}>
-              <span>{job.prompt.slice(0, 76)}</span>
-              <small>{job.status} · {new Date(job.createdAt).toLocaleString()}</small>
-            </button>
-          ))}
-        </aside>
-
-        <section className="job-detail">
-          {activeJob ? (
-            <>
-              <div className="job-head">
-                <span className={`pill ${activeJob.status}`}><CheckCircle2 size={15} /> {activeJob.status}</span>
-                <strong>{activeJob.prompt}</strong>
-              </div>
-              <pre className="logs">{logs.map((line) => `[${line.stream}] ${line.message}`).join("\n") || "Waiting for logs..."}</pre>
-              <div className="results">
-                <h2>Git status</h2>
-                <pre>{activeJob.gitStatus || "No status yet."}</pre>
-                <h2>Diff stat</h2>
-                <pre>{activeJob.gitDiffStat || "No diff yet."}</pre>
-                <h2>Diff</h2>
-                <pre>{activeJob.gitDiff || "No diff yet."}</pre>
-              </div>
-            </>
-          ) : (
-            <div className="empty">Выбери задачу или запусти новую.</div>
-          )}
+          <div className="project-grid">
+            {repos.map((repo) => (
+              <article className="project-card" key={`${repo.agentId}:${repo.id}`}>
+                <button className="project-main" onClick={() => selectProject(repo)}>
+                  <strong>{repo.name}</strong>
+                  <span><GitBranch size={14} /> {repo.currentBranch || "no branch"} · {repo.dirty ? "dirty" : "clean"}</span>
+                  <small>{repo.pathMasked}</small>
+                </button>
+                <button className="icon tiny" onClick={() => {
+                  setRepoKey(`${repo.agentId}:${repo.id}`);
+                  openProjectSettings(repo);
+                }} title="Настройки проекта"><Settings size={16} /></button>
+              </article>
+            ))}
+          </div>
         </section>
-      </section>
+      )}
+
+      {projectPanel && (
+        <form className="project-form" onSubmit={saveProject}>
+          <div className="section-head">
+            <h2>{projectPanel === "new" ? "New project" : "Project settings"}</h2>
+            <button className="secondary" type="button" onClick={() => setProjectPanel(null)}>Close</button>
+          </div>
+          <label>
+            Name
+            <input value={projectName} onChange={(event) => {
+              setProjectName(event.target.value);
+              if (projectPanel === "new") setProjectPath(defaultProjectPath(event.target.value));
+            }} />
+          </label>
+          <label>
+            Folder on home PC
+            <input value={projectPath} onChange={(event) => setProjectPath(event.target.value)} />
+          </label>
+          <div className="segments">
+            {(["read-only", "workspace-write"] as const).map((item) => (
+              <button className={sandbox === item ? "active" : ""} key={item} type="button" onClick={() => setSandbox(item)}>{item}</button>
+            ))}
+          </div>
+          <button disabled={busy || !online} type="submit"><Save size={16} /> Save project</button>
+        </form>
+      )}
+
+      {selectedRepo && (
+        <section className="project-workspace">
+          <aside className="chat-sidebar">
+            <div className="section-head">
+              <h2><MessageSquare size={18} /> Chats</h2>
+              <button className="icon tiny" onClick={() => openProjectSettings(selectedRepo)} title="Настройки"><Settings size={16} /></button>
+            </div>
+            <form className="new-chat" onSubmit={createChat}>
+              <input placeholder="New chat title" value={chatTitle} onChange={(event) => setChatTitle(event.target.value)} />
+              <button disabled={busy || !chatTitle.trim()}><Plus size={16} /></button>
+            </form>
+            <div className="chat-list">
+              {chats.map((chat) => (
+                <button className={activeChatId === chat.id ? "chat active" : "chat"} key={chat.id} onClick={() => loadChat(chat.id)}>
+                  <span>{chat.title}</span>
+                  <small>{new Date(chat.updatedAt).toLocaleString()}</small>
+                </button>
+              ))}
+            </div>
+          </aside>
+
+          <section className="chat-work">
+            <div className="repo-meta">
+              <GitBranch size={16} /> {selectedRepo.currentBranch || "no branch"} · {selectedRepo.dirty ? "dirty" : "clean"} · {selectedRepo.pathMasked}
+            </div>
+            {activeChat ? (
+              <>
+                <form className="composer" onSubmit={createJob}>
+                  <div className="segments">
+                    {selectedRepo.allowedSandboxes.map((item) => (
+                      <button className={sandbox === item ? "active" : ""} key={item} type="button" onClick={() => setSandbox(item)}>{item}</button>
+                    ))}
+                  </div>
+                  <div className="chips">
+                    {templates.map((template) => (
+                      <button key={template} type="button" onClick={() => setPrompt(template)}>{template}</button>
+                    ))}
+                  </div>
+                  <textarea placeholder={`Напиши задачу в чат "${activeChat.title}"...`} value={prompt} onChange={(event) => setPrompt(event.target.value)} />
+                  <div className="sticky-submit">
+                    <button disabled={busy || !prompt.trim()} type="submit"><Play size={18} /> Run Codex</button>
+                    {activeJob && ["queued", "assigned", "running"].includes(activeJob.status) && (
+                      <button className="stop" type="button" onClick={cancelJob}><Square size={18} /> Stop</button>
+                    )}
+                  </div>
+                </form>
+
+                <section className="workspace">
+                  <aside className="history">
+                    <h2><Activity size={18} /> Jobs</h2>
+                    {jobs.map((job) => (
+                      <button className={activeJob?.id === job.id ? "job active" : "job"} key={job.id} onClick={() => loadJob(job.id)}>
+                        <span>{job.prompt.slice(0, 76)}</span>
+                        <small>{job.status} · {new Date(job.createdAt).toLocaleString()}</small>
+                      </button>
+                    ))}
+                  </aside>
+
+                  <section className="job-detail">
+                    {activeJob ? (
+                      <>
+                        <div className="job-head">
+                          <span className={`pill ${activeJob.status}`}><CheckCircle2 size={15} /> {activeJob.status}</span>
+                          <strong>{activeJob.prompt}</strong>
+                        </div>
+                        <pre className="logs">{logs.map((line) => `[${line.stream}] ${line.message}`).join("\n") || "Waiting for logs..."}</pre>
+                        <div className="results">
+                          <h2>Git status</h2>
+                          <pre>{activeJob.gitStatus || "No status yet."}</pre>
+                          <h2>Diff stat</h2>
+                          <pre>{activeJob.gitDiffStat || "No diff yet."}</pre>
+                          <h2>Diff</h2>
+                          <pre>{activeJob.gitDiff || "No diff yet."}</pre>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="empty">Запусти первую задачу в этом чате.</div>
+                    )}
+                  </section>
+                </section>
+              </>
+            ) : (
+              <div className="empty">Выбери чат проекта или создай новый.</div>
+            )}
+          </section>
+        </section>
+      )}
     </main>
   );
 }

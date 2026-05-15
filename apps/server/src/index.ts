@@ -7,7 +7,10 @@ import Fastify, { type FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import {
   AgentToServerSchema,
+  CreateChatSchema,
   CreateJobSchema,
+  CreateProjectSchema,
+  UpdateProjectSchema,
   type AgentToServer,
   type RepoInfo,
   type ServerToAgent,
@@ -20,6 +23,7 @@ import {
   nowIso,
   openDb,
   type AgentRow,
+  type ChatRow,
   type JobRow,
   type LogRow,
   type RepoRow,
@@ -45,6 +49,11 @@ type AgentConnection = {
 
 const agents = new Map<string, AgentConnection>();
 const uiClients = new Set<{ send: (event: UiEvent) => void }>();
+const projectRequests = new Map<string, {
+  resolve: (value: Extract<AgentToServer, { type: "project.result" }>) => void;
+  reject: (error: Error) => void;
+  timer: NodeJS.Timeout;
+}>();
 
 function broadcast(event: UiEvent): void {
   for (const client of uiClients) client.send(event);
@@ -55,6 +64,22 @@ function sendAgent(agentId: string, message: ServerToAgent): boolean {
   if (!agent) return false;
   agent.send(message);
   return true;
+}
+
+function requestAgentProject(
+  agentId: string,
+  message: Extract<ServerToAgent, { type: "project.create" | "project.update" }>
+): Promise<Extract<AgentToServer, { type: "project.result" }>> {
+  const agent = agents.get(agentId);
+  if (!agent) return Promise.reject(new Error("agent_offline"));
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      projectRequests.delete(message.requestId);
+      reject(new Error("agent_timeout"));
+    }, 30000);
+    projectRequests.set(message.requestId, { resolve, reject, timer });
+    agent.send(message);
+  });
 }
 
 function markAgentStatus(agentId: string, status: "online" | "offline"): void {
@@ -118,6 +143,7 @@ function dispatchQueue(agentId: string): void {
     job: {
       id: job.id,
       repoId: job.repo_id,
+      chatId: job.chat_id ?? undefined,
       prompt: job.prompt,
       sandbox: job.sandbox,
       branchMode: job.branch_mode,
@@ -139,6 +165,7 @@ async function authenticateAgent(token: string | undefined): Promise<AgentRow | 
 function serializeJob(job: JobRow) {
   return {
     id: job.id,
+    chatId: job.chat_id,
     agentId: job.agent_id,
     repoId: job.repo_id,
     prompt: job.prompt,
@@ -157,6 +184,26 @@ function serializeJob(job: JobRow) {
     startedAt: job.started_at,
     finishedAt: job.finished_at
   };
+}
+
+function serializeChat(chat: ChatRow) {
+  return {
+    id: chat.id,
+    agentId: chat.agent_id,
+    repoId: chat.repo_id,
+    title: chat.title,
+    createdAt: chat.created_at,
+    updatedAt: chat.updated_at
+  };
+}
+
+function projectIdFromName(name: string): string {
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9а-яё]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 54);
+  return slug || id("project");
 }
 
 async function createApp(): Promise<FastifyInstance> {
@@ -213,9 +260,93 @@ async function createApp(): Promise<FastifyInstance> {
     return { repos: rows.map((row) => ({ ...mapRepo(row), agentId: row.agent_id, updatedAt: row.updated_at })) };
   });
 
+  app.post("/api/projects", async (request, reply) => {
+    if (!requireCsrf(db, request, reply)) return;
+    const parsed = CreateProjectSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_project", details: parsed.error.flatten() });
+    let repoId = projectIdFromName(parsed.data.name);
+    const existing = db.prepare("SELECT * FROM repos WHERE agent_id = ? AND id = ?")
+      .get(parsed.data.agentId, repoId) as RepoRow | undefined;
+    if (existing) repoId = `${repoId}-${Date.now().toString(36)}`;
+    try {
+      const result = await requestAgentProject(parsed.data.agentId, {
+        type: "project.create",
+        requestId: id("req"),
+        project: {
+          id: repoId,
+          name: parsed.data.name,
+          path: parsed.data.path,
+          defaultSandbox: parsed.data.defaultSandbox,
+          allowedSandboxes: ["read-only", "workspace-write"]
+        }
+      });
+      if (!result.ok) return reply.code(400).send({ error: result.error ?? "project_create_failed" });
+      if (result.repos) upsertRepos(parsed.data.agentId, result.repos);
+      return reply.code(201).send({ repoId });
+    } catch (error) {
+      return reply.code(503).send({ error: error instanceof Error ? error.message : "agent_error" });
+    }
+  });
+
+  app.put("/api/projects/:agentId/:repoId", async (request, reply) => {
+    if (!requireCsrf(db, request, reply)) return;
+    const params = request.params as { agentId: string; repoId: string };
+    const parsed = UpdateProjectSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_project", details: parsed.error.flatten() });
+    try {
+      const result = await requestAgentProject(params.agentId, {
+        type: "project.update",
+        requestId: id("req"),
+        repoId: params.repoId,
+        patch: parsed.data
+      });
+      if (!result.ok) return reply.code(400).send({ error: result.error ?? "project_update_failed" });
+      if (result.repos) upsertRepos(params.agentId, result.repos);
+      return { ok: true };
+    } catch (error) {
+      return reply.code(503).send({ error: error instanceof Error ? error.message : "agent_error" });
+    }
+  });
+
+  app.get("/api/chats", async (request, reply) => {
+    if (!requireAuth(db, request, reply)) return;
+    const query = request.query as { agentId?: string; repoId?: string };
+    if (!query.agentId || !query.repoId) return reply.code(400).send({ error: "agent_and_repo_required" });
+    const rows = db.prepare("SELECT * FROM chats WHERE agent_id = ? AND repo_id = ? ORDER BY updated_at DESC")
+      .all(query.agentId, query.repoId) as ChatRow[];
+    return { chats: rows.map(serializeChat) };
+  });
+
+  app.post("/api/chats", async (request, reply) => {
+    if (!requireCsrf(db, request, reply)) return;
+    const parsed = CreateChatSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_chat", details: parsed.error.flatten() });
+    const repo = db.prepare("SELECT * FROM repos WHERE agent_id = ? AND id = ?")
+      .get(parsed.data.agentId, parsed.data.repoId) as RepoRow | undefined;
+    if (!repo) return reply.code(404).send({ error: "repo_not_found" });
+    const chatId = id("chat");
+    const stamp = nowIso();
+    db.prepare("INSERT INTO chats (id,agent_id,repo_id,title,created_at,updated_at) VALUES (?,?,?,?,?,?)")
+      .run(chatId, parsed.data.agentId, parsed.data.repoId, parsed.data.title, stamp, stamp);
+    broadcast({ type: "chats.updated", agentId: parsed.data.agentId, repoId: parsed.data.repoId });
+    return reply.code(201).send({ chatId });
+  });
+
+  app.get("/api/chats/:id", async (request, reply) => {
+    if (!requireAuth(db, request, reply)) return;
+    const chatId = (request.params as { id: string }).id;
+    const chat = db.prepare("SELECT * FROM chats WHERE id = ?").get(chatId) as ChatRow | undefined;
+    if (!chat) return reply.code(404).send({ error: "not_found" });
+    const rows = db.prepare("SELECT * FROM jobs WHERE chat_id = ? ORDER BY created_at DESC").all(chatId) as JobRow[];
+    return { chat: serializeChat(chat), jobs: rows.map(serializeJob) };
+  });
+
   app.get("/api/jobs", async (request, reply) => {
     if (!requireAuth(db, request, reply)) return;
-    const rows = db.prepare("SELECT * FROM jobs ORDER BY created_at DESC LIMIT 50").all() as JobRow[];
+    const query = request.query as { chatId?: string };
+    const rows = query.chatId
+      ? db.prepare("SELECT * FROM jobs WHERE chat_id = ? ORDER BY created_at DESC LIMIT 50").all(query.chatId) as JobRow[]
+      : db.prepare("SELECT * FROM jobs ORDER BY created_at DESC LIMIT 50").all() as JobRow[];
     return { jobs: rows.map(serializeJob) };
   });
 
@@ -237,11 +368,25 @@ async function createApp(): Promise<FastifyInstance> {
     if (!repo) return reply.code(404).send({ error: "repo_not_found" });
     const allowed = JSON.parse(repo.allowed_sandboxes) as string[];
     if (!allowed.includes(parsed.data.sandbox)) return reply.code(400).send({ error: "sandbox_not_allowed" });
+    let chatId = parsed.data.chatId;
+    if (chatId) {
+      const chat = db.prepare("SELECT * FROM chats WHERE id = ? AND agent_id = ? AND repo_id = ?")
+        .get(chatId, parsed.data.agentId, parsed.data.repoId) as ChatRow | undefined;
+      if (!chat) return reply.code(404).send({ error: "chat_not_found" });
+    } else {
+      chatId = id("chat");
+      const stamp = nowIso();
+      db.prepare("INSERT INTO chats (id,agent_id,repo_id,title,created_at,updated_at) VALUES (?,?,?,?,?,?)")
+        .run(chatId, parsed.data.agentId, parsed.data.repoId, parsed.data.prompt.slice(0, 80), stamp, stamp);
+      broadcast({ type: "chats.updated", agentId: parsed.data.agentId, repoId: parsed.data.repoId });
+    }
     const jobId = id("job");
     db.prepare(`
-      INSERT INTO jobs (id,agent_id,repo_id,prompt,sandbox,branch_mode,kind,status,created_at)
-      VALUES (?,?,?,?,?,?,?,?,?)
-    `).run(jobId, parsed.data.agentId, parsed.data.repoId, parsed.data.prompt, parsed.data.sandbox, parsed.data.branchMode, "codex", "queued", nowIso());
+      INSERT INTO jobs (id,chat_id,agent_id,repo_id,prompt,sandbox,branch_mode,kind,status,created_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?)
+    `).run(jobId, chatId, parsed.data.agentId, parsed.data.repoId, parsed.data.prompt, parsed.data.sandbox, parsed.data.branchMode, "codex", "queued", nowIso());
+    db.prepare("UPDATE chats SET updated_at = ? WHERE id = ?").run(nowIso(), chatId);
+    broadcast({ type: "chats.updated", agentId: parsed.data.agentId, repoId: parsed.data.repoId });
     broadcast({ type: "job.created", jobId });
     broadcast({ type: "job.updated", jobId, status: "queued" });
     dispatchQueue(parsed.data.agentId);
@@ -341,6 +486,14 @@ async function createApp(): Promise<FastifyInstance> {
         db.prepare("UPDATE agents SET current_job_id = NULL WHERE id = ?").run(agent.id);
         broadcast({ type: "job.updated", jobId: parsed.jobId, status: parsed.status });
         dispatchQueue(agent.id);
+      }
+      if (parsed.type === "project.result") {
+        const pending = projectRequests.get(parsed.requestId);
+        if (pending) {
+          clearTimeout(pending.timer);
+          projectRequests.delete(parsed.requestId);
+          pending.resolve(parsed);
+        }
       }
     });
 

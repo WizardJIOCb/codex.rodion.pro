@@ -47,6 +47,7 @@ export type RepoRow = {
 
 export type JobRow = {
   id: string;
+  chat_id: string | null;
   agent_id: string;
   repo_id: string;
   prompt: string;
@@ -64,6 +65,15 @@ export type JobRow = {
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
+};
+
+export type ChatRow = {
+  id: string;
+  agent_id: string;
+  repo_id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
 };
 
 export type LogRow = {
@@ -121,6 +131,7 @@ export function openDb(path: string): DatabaseSync {
     );
     CREATE TABLE IF NOT EXISTS jobs (
       id TEXT PRIMARY KEY,
+      chat_id TEXT,
       agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
       repo_id TEXT NOT NULL,
       prompt TEXT NOT NULL,
@@ -139,6 +150,14 @@ export function openDb(path: string): DatabaseSync {
       started_at TEXT,
       finished_at TEXT
     );
+    CREATE TABLE IF NOT EXISTS chats (
+      id TEXT PRIMARY KEY,
+      agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      repo_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS job_logs (
       id TEXT PRIMARY KEY,
       job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
@@ -147,8 +166,14 @@ export function openDb(path: string): DatabaseSync {
       at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_jobs_agent_status ON jobs(agent_id, status, created_at);
+    CREATE INDEX IF NOT EXISTS idx_chats_repo_updated ON chats(agent_id, repo_id, updated_at);
     CREATE INDEX IF NOT EXISTS idx_logs_job_at ON job_logs(job_id, at);
   `);
+  const jobColumns = db.prepare("PRAGMA table_info(jobs)").all() as Array<{ name: string }>;
+  if (!jobColumns.some((column) => column.name === "chat_id")) {
+    db.exec("ALTER TABLE jobs ADD COLUMN chat_id TEXT");
+  }
+  db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_chat_created ON jobs(chat_id, created_at)");
   return db;
 }
 

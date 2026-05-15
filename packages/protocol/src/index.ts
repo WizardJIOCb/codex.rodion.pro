@@ -66,11 +66,20 @@ export const AgentJobDoneSchema = z.object({
   branchName: z.string().optional()
 });
 
+export const AgentProjectResultSchema = z.object({
+  type: z.literal("project.result"),
+  requestId: z.string().min(1),
+  ok: z.boolean(),
+  error: z.string().optional(),
+  repos: z.array(RepoInfoSchema).optional()
+});
+
 export const AgentToServerSchema = z.discriminatedUnion("type", [
   AgentHelloSchema,
   AgentHeartbeatSchema,
   AgentJobLogSchema,
-  AgentJobDoneSchema
+  AgentJobDoneSchema,
+  AgentProjectResultSchema
 ]);
 export type AgentToServer = z.infer<typeof AgentToServerSchema>;
 
@@ -79,6 +88,7 @@ export const ServerJobRunSchema = z.object({
   job: z.object({
     id: z.string().min(1),
     repoId: z.string().min(1),
+    chatId: z.string().optional(),
     prompt: z.string().min(1),
     sandbox: SandboxSchema,
     branchMode: z.enum(["current", "create-per-job"]).default("current"),
@@ -92,9 +102,35 @@ export const ServerJobCancelSchema = z.object({
   jobId: z.string().min(1)
 });
 
+export const ServerProjectCreateSchema = z.object({
+  type: z.literal("project.create"),
+  requestId: z.string().min(1),
+  project: z.object({
+    id: z.string().min(1).max(80),
+    name: z.string().min(1).max(120),
+    path: z.string().min(3).max(260),
+    defaultSandbox: SandboxSchema.default("workspace-write"),
+    allowedSandboxes: z.array(SandboxSchema).min(1).default(["read-only", "workspace-write"])
+  })
+});
+
+export const ServerProjectUpdateSchema = z.object({
+  type: z.literal("project.update"),
+  requestId: z.string().min(1),
+  repoId: z.string().min(1),
+  patch: z.object({
+    name: z.string().min(1).max(120).optional(),
+    path: z.string().min(3).max(260).optional(),
+    defaultSandbox: SandboxSchema.optional(),
+    allowedSandboxes: z.array(SandboxSchema).min(1).optional()
+  })
+});
+
 export const ServerToAgentSchema = z.discriminatedUnion("type", [
   ServerJobRunSchema,
   ServerJobCancelSchema,
+  ServerProjectCreateSchema,
+  ServerProjectUpdateSchema,
   z.object({ type: z.literal("repo.scan") })
 ]);
 export type ServerToAgent = z.infer<typeof ServerToAgentSchema>;
@@ -102,15 +138,40 @@ export type ServerToAgent = z.infer<typeof ServerToAgentSchema>;
 export const CreateJobSchema = z.object({
   repoId: z.string().min(1),
   agentId: z.string().min(1),
+  chatId: z.string().optional(),
   prompt: z.string().min(3).max(16000),
   sandbox: SandboxSchema,
   branchMode: z.enum(["current", "create-per-job"]).default("current")
 });
 export type CreateJob = z.infer<typeof CreateJobSchema>;
 
+export const CreateChatSchema = z.object({
+  agentId: z.string().min(1),
+  repoId: z.string().min(1),
+  title: z.string().min(1).max(160)
+});
+export type CreateChat = z.infer<typeof CreateChatSchema>;
+
+export const CreateProjectSchema = z.object({
+  agentId: z.string().min(1),
+  name: z.string().min(1).max(120),
+  path: z.string().min(3).max(260),
+  defaultSandbox: SandboxSchema.default("workspace-write")
+});
+export type CreateProject = z.infer<typeof CreateProjectSchema>;
+
+export const UpdateProjectSchema = z.object({
+  name: z.string().min(1).max(120).optional(),
+  path: z.string().min(3).max(260).optional(),
+  defaultSandbox: SandboxSchema.optional(),
+  allowedSandboxes: z.array(SandboxSchema).min(1).optional()
+});
+export type UpdateProject = z.infer<typeof UpdateProjectSchema>;
+
 export const UiEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("agent.status"), agentId: z.string(), status: z.enum(["online", "offline"]) }),
   z.object({ type: z.literal("repos.updated"), agentId: z.string(), repos: z.array(RepoInfoSchema) }),
+  z.object({ type: z.literal("chats.updated"), agentId: z.string(), repoId: z.string() }),
   z.object({ type: z.literal("job.created"), jobId: z.string() }),
   z.object({ type: z.literal("job.updated"), jobId: z.string(), status: JobStatusSchema }),
   AgentJobLogSchema
