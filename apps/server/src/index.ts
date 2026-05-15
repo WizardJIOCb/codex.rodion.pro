@@ -112,11 +112,14 @@ function markAgentStatus(agentId: string, status: "online" | "offline"): void {
 function upsertRepos(agentId: string, repos: RepoInfo[]): void {
   const stamp = nowIso();
   const upsert = db.prepare(`
-    INSERT INTO repos (id,agent_id,name,path_masked,current_branch,dirty,default_sandbox,allowed_sandboxes,test_commands,updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?)
+    INSERT INTO repos (id,agent_id,name,path_masked,github_url,server_path,domain,current_branch,dirty,default_sandbox,allowed_sandboxes,test_commands,updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
     ON CONFLICT(agent_id,id) DO UPDATE SET
       name=excluded.name,
       path_masked=excluded.path_masked,
+      github_url=excluded.github_url,
+      server_path=excluded.server_path,
+      domain=excluded.domain,
       current_branch=excluded.current_branch,
       dirty=excluded.dirty,
       default_sandbox=excluded.default_sandbox,
@@ -130,6 +133,9 @@ function upsertRepos(agentId: string, repos: RepoInfo[]): void {
       agentId,
       repo.name,
       repo.pathMasked,
+      repo.githubUrl ?? null,
+      repo.serverPath ?? null,
+      repo.domain ?? null,
       repo.currentBranch ?? null,
       repo.dirty ? 1 : 0,
       repo.defaultSandbox,
@@ -298,6 +304,9 @@ async function createApp(): Promise<FastifyInstance> {
           id: repoId,
           name: parsed.data.name,
           path: parsed.data.path,
+          githubUrl: parsed.data.githubUrl?.trim() || undefined,
+          serverPath: parsed.data.serverPath?.trim() || undefined,
+          domain: parsed.data.domain?.trim() || undefined,
           defaultSandbox: parsed.data.defaultSandbox,
           allowedSandboxes: ["read-only", "workspace-write"]
         }

@@ -14,6 +14,9 @@ const RepoConfigSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   path: z.string().min(1),
+  githubUrl: z.string().max(300).optional(),
+  serverPath: z.string().max(260).optional(),
+  domain: z.string().max(253).optional(),
   defaultSandbox: z.enum(["read-only", "workspace-write"]),
   allowedSandboxes: z.array(z.enum(["read-only", "workspace-write"])).min(1),
   testCommands: z.array(TestCommandSchema).default([])

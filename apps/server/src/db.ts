@@ -37,6 +37,9 @@ export type RepoRow = {
   agent_id: string;
   name: string;
   path_masked: string;
+  github_url: string | null;
+  server_path: string | null;
+  domain: string | null;
   current_branch: string | null;
   dirty: number;
   default_sandbox: Sandbox;
@@ -121,6 +124,9 @@ export function openDb(path: string): DatabaseSync {
       agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
       path_masked TEXT NOT NULL,
+      github_url TEXT,
+      server_path TEXT,
+      domain TEXT,
       current_branch TEXT,
       dirty INTEGER NOT NULL,
       default_sandbox TEXT NOT NULL,
@@ -173,6 +179,16 @@ export function openDb(path: string): DatabaseSync {
   if (!jobColumns.some((column) => column.name === "chat_id")) {
     db.exec("ALTER TABLE jobs ADD COLUMN chat_id TEXT");
   }
+  const repoColumns = db.prepare("PRAGMA table_info(repos)").all() as Array<{ name: string }>;
+  if (!repoColumns.some((column) => column.name === "github_url")) {
+    db.exec("ALTER TABLE repos ADD COLUMN github_url TEXT");
+  }
+  if (!repoColumns.some((column) => column.name === "server_path")) {
+    db.exec("ALTER TABLE repos ADD COLUMN server_path TEXT");
+  }
+  if (!repoColumns.some((column) => column.name === "domain")) {
+    db.exec("ALTER TABLE repos ADD COLUMN domain TEXT");
+  }
   db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_chat_created ON jobs(chat_id, created_at)");
   return db;
 }
@@ -190,6 +206,9 @@ export function mapRepo(row: RepoRow): RepoInfo {
     id: row.id,
     name: row.name,
     pathMasked: row.path_masked,
+    githubUrl: row.github_url ?? undefined,
+    serverPath: row.server_path ?? undefined,
+    domain: row.domain ?? undefined,
     currentBranch: row.current_branch ?? undefined,
     dirty: row.dirty === 1,
     defaultSandbox: row.default_sandbox,

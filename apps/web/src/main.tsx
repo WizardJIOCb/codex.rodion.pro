@@ -35,6 +35,9 @@ type Repo = {
   agentId: string;
   name: string;
   pathMasked: string;
+  githubUrl?: string;
+  serverPath?: string;
+  domain?: string;
   currentBranch?: string;
   dirty: boolean;
   defaultSandbox: "read-only" | "workspace-write";
@@ -124,6 +127,9 @@ function App() {
   const [projectPanel, setProjectPanel] = useState<"new" | "settings" | null>(null);
   const [projectName, setProjectName] = useState("");
   const [projectPath, setProjectPath] = useState("");
+  const [projectGithubUrl, setProjectGithubUrl] = useState("");
+  const [projectServerPath, setProjectServerPath] = useState("");
+  const [projectDomain, setProjectDomain] = useState("");
   const [originalProjectPath, setOriginalProjectPath] = useState("");
   const [chatTitle, setChatTitle] = useState("");
   const [gitMessage, setGitMessage] = useState("Update project");
@@ -195,7 +201,7 @@ function App() {
     setRepoKey(`${repo.agentId}:${repo.id}`);
     setSandbox(repo.defaultSandbox);
     setGitMessage(`Update ${repo.name}`);
-    setGitRemoteUrl("");
+    setGitRemoteUrl(repo.githubUrl ?? "");
     setGitNotice("");
     setActiveChatId("");
     setJobs([]);
@@ -219,6 +225,9 @@ function App() {
   function openNewProject() {
     setProjectName("New Project");
     setProjectPath(defaultProjectPath("New Project"));
+    setProjectGithubUrl("");
+    setProjectServerPath("");
+    setProjectDomain("");
     setOriginalProjectPath("");
     setProjectPanel("new");
   }
@@ -226,6 +235,9 @@ function App() {
   function openProjectSettings(repo: Repo) {
     setProjectName(repo.name);
     setProjectPath(repo.pathMasked);
+    setProjectGithubUrl(repo.githubUrl ?? "");
+    setProjectServerPath(repo.serverPath ?? "");
+    setProjectDomain(repo.domain ?? "");
     setOriginalProjectPath(repo.pathMasked);
     setSandbox(repo.defaultSandbox);
     setProjectPanel("settings");
@@ -288,6 +300,9 @@ function App() {
     const body: Record<string, unknown> = {
       agentId: selectedAgent.id,
       name: projectName.trim(),
+      githubUrl: projectGithubUrl.trim(),
+      serverPath: projectServerPath.trim(),
+      domain: projectDomain.trim(),
       defaultSandbox: sandbox,
       allowedSandboxes: ["read-only", "workspace-write"]
     };
@@ -368,7 +383,7 @@ function App() {
       headers: { "x-csrf-token": csrf },
       body: JSON.stringify({
         message: gitMessage.trim(),
-        remoteUrl: gitRemoteUrl.trim() || undefined
+        remoteUrl: gitRemoteUrl.trim() || selectedRepo.githubUrl || undefined
       })
     });
     const data = await response.json().catch(() => ({}));
@@ -441,6 +456,7 @@ function App() {
                   <strong>{repo.name}</strong>
                   <span><GitBranch size={14} /> {repo.currentBranch || "no branch"} · {repo.dirty ? "dirty" : "clean"}</span>
                   <small>{repo.pathMasked}</small>
+                  {repo.domain && <small>{repo.domain}</small>}
                 </button>
                 <button className="icon tiny" onClick={() => {
                   setRepoKey(`${repo.agentId}:${repo.id}`);
@@ -468,6 +484,18 @@ function App() {
           <label>
             Folder on home PC
             <input value={projectPath} onChange={(event) => setProjectPath(event.target.value)} />
+          </label>
+          <label>
+            GitHub repository
+            <input placeholder="https://github.com/WizardJIOCb/project.git" value={projectGithubUrl} onChange={(event) => setProjectGithubUrl(event.target.value)} />
+          </label>
+          <label>
+            Server project folder
+            <input placeholder="/var/www/project.domain" value={projectServerPath} onChange={(event) => setProjectServerPath(event.target.value)} />
+          </label>
+          <label>
+            Domain
+            <input placeholder="project.domain" value={projectDomain} onChange={(event) => setProjectDomain(event.target.value)} />
           </label>
           <div className="segments">
             {(["read-only", "workspace-write"] as const).map((item) => (
@@ -502,6 +530,8 @@ function App() {
           <section className="chat-work">
             <div className="repo-meta">
               <GitBranch size={16} /> {selectedRepo.currentBranch || "no branch"} · {selectedRepo.dirty ? "dirty" : "clean"} · {selectedRepo.pathMasked}
+              {selectedRepo.domain && <> · {selectedRepo.domain}</>}
+              {selectedRepo.serverPath && <> · {selectedRepo.serverPath}</>}
             </div>
             <form className="git-panel" onSubmit={syncGit}>
               <input aria-label="Commit message" value={gitMessage} onChange={(event) => setGitMessage(event.target.value)} />

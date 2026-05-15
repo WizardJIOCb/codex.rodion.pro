@@ -12,6 +12,9 @@
       "id": "codex-mobile-controller",
       "name": "Codex Mobile Controller",
       "path": "C:\\Projects\\codex.rodion.pro",
+      "githubUrl": "https://github.com/WizardJIOCb/codex.rodion.pro.git",
+      "serverPath": "/var/www/codex.rodion.pro",
+      "domain": "codex.rodion.pro",
       "defaultSandbox": "workspace-write",
       "allowedSandboxes": ["read-only", "workspace-write"],
       "testCommands": [

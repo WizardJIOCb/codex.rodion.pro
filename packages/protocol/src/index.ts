@@ -18,6 +18,9 @@ export const RepoInfoSchema = z.object({
   id: z.string().min(1).max(80),
   name: z.string().min(1).max(120),
   pathMasked: z.string().min(1).max(260),
+  githubUrl: z.string().max(300).optional(),
+  serverPath: z.string().max(260).optional(),
+  domain: z.string().max(253).optional(),
   currentBranch: z.string().optional(),
   dirty: z.boolean(),
   defaultSandbox: SandboxSchema,
@@ -132,6 +135,9 @@ export const ServerProjectCreateSchema = z.object({
     id: z.string().min(1).max(80),
     name: z.string().min(1).max(120),
     path: z.string().min(3).max(260),
+    githubUrl: z.string().max(300).optional(),
+    serverPath: z.string().max(260).optional(),
+    domain: z.string().max(253).optional(),
     defaultSandbox: SandboxSchema.default("workspace-write"),
     allowedSandboxes: z.array(SandboxSchema).min(1).default(["read-only", "workspace-write"])
   })
@@ -144,6 +150,9 @@ export const ServerProjectUpdateSchema = z.object({
   patch: z.object({
     name: z.string().min(1).max(120).optional(),
     path: z.string().min(3).max(260).optional(),
+    githubUrl: z.string().max(300).optional(),
+    serverPath: z.string().max(260).optional(),
+    domain: z.string().max(253).optional(),
     defaultSandbox: SandboxSchema.optional(),
     allowedSandboxes: z.array(SandboxSchema).min(1).optional()
   })
@@ -188,6 +197,9 @@ export const CreateProjectSchema = z.object({
   agentId: z.string().min(1),
   name: z.string().min(1).max(120),
   path: z.string().min(3).max(260),
+  githubUrl: z.string().max(300).optional(),
+  serverPath: z.string().max(260).optional(),
+  domain: z.string().max(253).optional(),
   defaultSandbox: SandboxSchema.default("workspace-write")
 });
 export type CreateProject = z.infer<typeof CreateProjectSchema>;
@@ -195,6 +207,9 @@ export type CreateProject = z.infer<typeof CreateProjectSchema>;
 export const UpdateProjectSchema = z.object({
   name: z.string().min(1).max(120).optional(),
   path: z.string().min(3).max(260).optional(),
+  githubUrl: z.string().max(300).optional(),
+  serverPath: z.string().max(260).optional(),
+  domain: z.string().max(253).optional(),
   defaultSandbox: SandboxSchema.optional(),
   allowedSandboxes: z.array(SandboxSchema).min(1).optional()
 });

@@ -113,6 +113,11 @@ async function toolVersion(command: string, args = ["--version"]): Promise<strin
   return (result.stdout || result.stderr).trim().split(/\r?\n/)[0];
 }
 
+function optionalText(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
 async function hello(): Promise<AgentToServer> {
   const [repos, codexVersion, gitVersion] = await Promise.all([
     scanRepos(config),
@@ -178,6 +183,9 @@ function connect() {
           id: message.project.id,
           name: message.project.name,
           path: message.project.path,
+          githubUrl: optionalText(message.project.githubUrl),
+          serverPath: optionalText(message.project.serverPath),
+          domain: optionalText(message.project.domain),
           defaultSandbox: message.project.defaultSandbox,
           allowedSandboxes: message.project.allowedSandboxes,
           testCommands: []
@@ -199,6 +207,9 @@ function connect() {
           repo.path = message.patch.path;
         }
         if (message.patch.name) repo.name = message.patch.name;
+        if ("githubUrl" in message.patch) repo.githubUrl = optionalText(message.patch.githubUrl);
+        if ("serverPath" in message.patch) repo.serverPath = optionalText(message.patch.serverPath);
+        if ("domain" in message.patch) repo.domain = optionalText(message.patch.domain);
         if (message.patch.defaultSandbox) repo.defaultSandbox = message.patch.defaultSandbox;
         if (message.patch.allowedSandboxes) repo.allowedSandboxes = message.patch.allowedSandboxes;
         if (!repo.allowedSandboxes.includes(repo.defaultSandbox)) repo.defaultSandbox = repo.allowedSandboxes[0] ?? "read-only";
