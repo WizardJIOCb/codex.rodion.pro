@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
-import type { JobStatus, RepoInfo, Sandbox } from "@cmc/protocol";
+import type { CodexUsage, JobStatus, RepoInfo, Sandbox } from "@cmc/protocol";
 
 export type UserRow = {
   id: string;
@@ -26,6 +26,7 @@ export type AgentRow = {
   agent_version: string | null;
   codex_version: string | null;
   git_version: string | null;
+  codex_usage_json: string | null;
   status: "online" | "offline";
   current_job_id: string | null;
   last_seen_at: string | null;
@@ -129,6 +130,7 @@ export function openDb(path: string): DatabaseSync {
       agent_version TEXT,
       codex_version TEXT,
       git_version TEXT,
+      codex_usage_json TEXT,
       status TEXT NOT NULL DEFAULT 'offline',
       current_job_id TEXT,
       last_seen_at TEXT,
@@ -223,6 +225,10 @@ export function openDb(path: string): DatabaseSync {
   if (!repoColumns.some((column) => column.name === "domain")) {
     db.exec("ALTER TABLE repos ADD COLUMN domain TEXT");
   }
+  const agentColumns = db.prepare("PRAGMA table_info(agents)").all() as Array<{ name: string }>;
+  if (!agentColumns.some((column) => column.name === "codex_usage_json")) {
+    db.exec("ALTER TABLE agents ADD COLUMN codex_usage_json TEXT");
+  }
   const chatColumns = db.prepare("PRAGMA table_info(chats)").all() as Array<{ name: string }>;
   if (!chatColumns.some((column) => column.name === "source")) {
     db.exec("ALTER TABLE chats ADD COLUMN source TEXT NOT NULL DEFAULT 'web'");
@@ -238,6 +244,15 @@ export function openDb(path: string): DatabaseSync {
   db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_chats_external ON chats(agent_id, source, external_id) WHERE external_id IS NOT NULL");
   db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_external ON chat_messages(chat_id, source, external_id) WHERE external_id IS NOT NULL");
   return db;
+}
+
+export function parseCodexUsage(value: string | null): CodexUsage | undefined {
+  if (!value) return undefined;
+  try {
+    return JSON.parse(value) as CodexUsage;
+  } catch {
+    return undefined;
+  }
 }
 
 export function nowIso(): string {

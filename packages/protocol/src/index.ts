@@ -32,6 +32,18 @@ export const RepoInfoSchema = z.object({
 });
 export type RepoInfo = z.infer<typeof RepoInfoSchema>;
 
+export const CodexUsageSchema = z.object({
+  status: z.enum(["signed-in", "signed-out", "unavailable"]),
+  summary: z.string().min(1).max(300),
+  source: z.string().min(1).max(80),
+  checkedAt: z.string().datetime(),
+  resetAt: z.string().datetime().optional(),
+  limit: z.number().int().nonnegative().optional(),
+  remaining: z.number().int().nonnegative().optional(),
+  usedPercent: z.number().min(0).max(100).optional()
+});
+export type CodexUsage = z.infer<typeof CodexUsageSchema>;
+
 export const AgentHelloSchema = z.object({
   type: z.literal("agent.hello"),
   agentId: z.string().min(1),
@@ -40,12 +52,14 @@ export const AgentHelloSchema = z.object({
   agentVersion: z.string().min(1),
   codexVersion: z.string().optional(),
   gitVersion: z.string().optional(),
+  codexUsage: CodexUsageSchema.optional(),
   repos: z.array(RepoInfoSchema)
 });
 
 export const AgentHeartbeatSchema = z.object({
   type: z.literal("agent.heartbeat"),
   currentJobId: z.string().optional(),
+  codexUsage: CodexUsageSchema.optional(),
   repos: z.array(RepoInfoSchema).optional()
 });
 

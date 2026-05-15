@@ -24,6 +24,7 @@ import {
   mapRepo,
   nowIso,
   openDb,
+  parseCodexUsage,
   type AgentRow,
   type ChatMessageRow,
   type ChatRow,
@@ -427,9 +428,9 @@ async function createApp(): Promise<FastifyInstance> {
 
   app.get("/api/agents", async (request, reply) => {
     if (!requireAuth(db, request, reply)) return;
-    const rows = db.prepare("SELECT id,name,hostname,os,agent_version,codex_version,git_version,status,current_job_id,last_seen_at,created_at FROM agents ORDER BY created_at")
+    const rows = db.prepare("SELECT id,name,hostname,os,agent_version,codex_version,git_version,codex_usage_json,status,current_job_id,last_seen_at,created_at FROM agents ORDER BY created_at")
       .all() as AgentRow[];
-    return { agents: rows };
+    return { agents: rows.map((row) => ({ ...row, codexUsage: parseCodexUsage(row.codex_usage_json) })) };
   });
 
   app.get("/api/repos", async (request, reply) => {
@@ -700,14 +701,28 @@ async function createApp(): Promise<FastifyInstance> {
           return;
         }
         db.prepare(`
-          UPDATE agents SET hostname=?, os=?, agent_version=?, codex_version=?, git_version=?, last_seen_at=?, status='online'
+          UPDATE agents SET hostname=?, os=?, agent_version=?, codex_version=?, git_version=?, codex_usage_json=?, last_seen_at=?, status='online'
           WHERE id=?
-        `).run(parsed.hostname, parsed.os, parsed.agentVersion, parsed.codexVersion ?? null, parsed.gitVersion ?? null, nowIso(), agent.id);
+        `).run(
+          parsed.hostname,
+          parsed.os,
+          parsed.agentVersion,
+          parsed.codexVersion ?? null,
+          parsed.gitVersion ?? null,
+          parsed.codexUsage ? JSON.stringify(parsed.codexUsage) : null,
+          nowIso(),
+          agent.id
+        );
         upsertRepos(agent.id, parsed.repos);
         dispatchQueue(agent.id);
       }
       if (parsed.type === "agent.heartbeat") {
-        db.prepare("UPDATE agents SET last_seen_at=?, current_job_id=? WHERE id=?").run(nowIso(), parsed.currentJobId ?? null, agent.id);
+        if (parsed.codexUsage) {
+          db.prepare("UPDATE agents SET last_seen_at=?, current_job_id=?, codex_usage_json=? WHERE id=?")
+            .run(nowIso(), parsed.currentJobId ?? null, JSON.stringify(parsed.codexUsage), agent.id);
+        } else {
+          db.prepare("UPDATE agents SET last_seen_at=?, current_job_id=? WHERE id=?").run(nowIso(), parsed.currentJobId ?? null, agent.id);
+        }
         if (parsed.repos) upsertRepos(agent.id, parsed.repos);
         clearOrphanedAgentJobs(agent.id, parsed.currentJobId);
         dispatchQueue(agent.id);

@@ -860,6 +860,55 @@ pre {
   color: var(--text);
 }
 
+.codex-limit {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(86, 197, 150, 0.22);
+  border-radius: 8px;
+  background: rgba(86, 197, 150, 0.07);
+}
+
+.codex-limit div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.codex-limit span,
+.codex-limit small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.codex-limit strong {
+  color: var(--accent);
+}
+
+.codex-limit p {
+  margin: 0;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.limit-bar {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #0e1513;
+  border: 1px solid var(--line);
+}
+
+.limit-bar span {
+  display: block;
+  height: 100%;
+  min-width: 3px;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), var(--warn));
+}
+
 .compact-run {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;

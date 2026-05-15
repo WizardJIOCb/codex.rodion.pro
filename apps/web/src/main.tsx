@@ -36,6 +36,16 @@ type Agent = {
   status: "online" | "offline";
   codex_version?: string;
   git_version?: string;
+  codexUsage?: {
+    status: "signed-in" | "signed-out" | "unavailable";
+    summary: string;
+    source: string;
+    checkedAt: string;
+    resetAt?: string;
+    limit?: number;
+    remaining?: number;
+    usedPercent?: number;
+  };
 };
 
 type Repo = {
@@ -795,6 +805,24 @@ function App() {
             <span>Filesystem Access <strong>{sandbox === "danger-full-access" ? "Full" : "Scoped"}</strong></span>
             <span>Network Access <strong>{sandbox === "danger-full-access" ? "Enabled" : "Restricted"}</strong></span>
             <span>Auto Deploy <strong>{selectedRepo?.serverPath ? "Ready" : "Not set"}</strong></span>
+          </div>
+          <div className="codex-limit">
+            <div>
+              <span>Codex Account</span>
+              <strong>{selectedAgent?.codexUsage?.status === "signed-in" ? "Signed in" : selectedAgent?.codexUsage?.status === "signed-out" ? "Signed out" : "Unknown"}</strong>
+            </div>
+            <p>{selectedAgent?.codexUsage?.summary ?? "Waiting for agent limit probe."}</p>
+            {typeof selectedAgent?.codexUsage?.usedPercent === "number" && (
+              <div className="limit-bar" aria-label="Codex usage">
+                <span style={{ width: `${selectedAgent.codexUsage.usedPercent}%` }} />
+              </div>
+            )}
+            <small>
+              {selectedAgent?.codexUsage?.remaining !== undefined && selectedAgent?.codexUsage?.limit !== undefined
+                ? `${selectedAgent.codexUsage.remaining} of ${selectedAgent.codexUsage.limit} left`
+                : "Exact remaining limit is not exposed by Codex CLI."}
+            </small>
+            {selectedAgent?.codexUsage?.checkedAt && <small>Checked {new Date(selectedAgent.codexUsage.checkedAt).toLocaleString()}</small>}
           </div>
         </section>
 

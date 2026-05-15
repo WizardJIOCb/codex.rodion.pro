@@ -1,7 +1,7 @@
 import os from "node:os";
 import { mkdirSync } from "node:fs";
 import WebSocket from "ws";
-import { ServerToAgentSchema, type AgentToServer, type ServerToAgent } from "@cmc/protocol";
+import { ServerToAgentSchema, type AgentToServer, type CodexUsage, type ServerToAgent } from "@cmc/protocol";
 import { loadAgentConfig, saveAgentConfig } from "./config.js";
 import { Runner } from "./codex-runner.js";
 import { syncLocalChats } from "./local-chat-sync.js";
@@ -16,6 +16,8 @@ if (!token) throw new Error(`Missing agent token env var: ${config.tokenEnv}`);
 
 let currentRunner: Runner | null = null;
 let currentJobId: string | undefined;
+let cachedCodexUsage: CodexUsage | undefined;
+let cachedCodexUsageAt = 0;
 
 async function ensureGitRepo(path: string): Promise<void> {
   mkdirSync(path, { recursive: true });
@@ -176,16 +178,46 @@ async function toolVersion(command: string, args = ["--version"]): Promise<strin
   return (result.stdout || result.stderr).trim().split(/\r?\n/)[0];
 }
 
+async function probeCodexUsage(force = false): Promise<CodexUsage> {
+  const cacheTtlMs = 10 * 60 * 1000;
+  if (!force && cachedCodexUsage && Date.now() - cachedCodexUsageAt < cacheTtlMs) return cachedCodexUsage;
+
+  const checkedAt = new Date().toISOString();
+  try {
+    const result = await runCapture("codex", ["login", "status"], undefined, 15000);
+    const rawStatus = (result.stdout || result.stderr).trim();
+    const signedIn = result.exitCode === 0 && /logged in/i.test(rawStatus);
+    cachedCodexUsage = {
+      status: signedIn ? "signed-in" : "signed-out",
+      summary: signedIn
+        ? "Signed in. Exact remaining Codex limit is not exposed by the local CLI yet."
+        : rawStatus || "Codex account is not signed in.",
+      source: "codex login status",
+      checkedAt
+    };
+  } catch (error) {
+    cachedCodexUsage = {
+      status: "unavailable",
+      summary: error instanceof Error ? error.message : "Could not read Codex account status.",
+      source: "codex login status",
+      checkedAt
+    };
+  }
+  cachedCodexUsageAt = Date.now();
+  return cachedCodexUsage;
+}
+
 function optionalText(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
 }
 
 async function hello(): Promise<AgentToServer> {
-  const [repos, codexVersion, gitVersion] = await Promise.all([
+  const [repos, codexVersion, gitVersion, codexUsage] = await Promise.all([
     scanRepos(config),
     toolVersion("codex"),
-    toolVersion("git", ["--version"])
+    toolVersion("git", ["--version"]),
+    probeCodexUsage(true)
   ]);
   return {
     type: "agent.hello",
@@ -195,6 +227,7 @@ async function hello(): Promise<AgentToServer> {
     agentVersion: "0.1.0",
     codexVersion,
     gitVersion,
+    codexUsage,
     repos
   };
 }
@@ -229,6 +262,7 @@ function connect() {
       send({
         type: "agent.heartbeat",
         currentJobId,
+        codexUsage: await probeCodexUsage(),
         repos: await scanRepos(config)
       });
       return;
@@ -349,7 +383,7 @@ function connect() {
 
   const heartbeat = setInterval(async () => {
     if (ws.readyState !== WebSocket.OPEN) return;
-    send({ type: "agent.heartbeat", currentJobId, repos: await scanRepos(config) });
+    send({ type: "agent.heartbeat", currentJobId, codexUsage: await probeCodexUsage(), repos: await scanRepos(config) });
   }, config.heartbeatIntervalMs);
   const chatSync = setInterval(async () => {
     if (ws.readyState !== WebSocket.OPEN) return;
