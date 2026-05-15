@@ -15,8 +15,8 @@
       "githubUrl": "https://github.com/WizardJIOCb/codex.rodion.pro.git",
       "serverPath": "/var/www/codex.rodion.pro",
       "domain": "codex.rodion.pro",
-      "defaultSandbox": "workspace-write",
-      "allowedSandboxes": ["read-only", "workspace-write"],
+      "defaultSandbox": "danger-full-access",
+      "allowedSandboxes": ["read-only", "workspace-write", "danger-full-access"],
       "testCommands": [
         {
           "id": "pnpm-build",

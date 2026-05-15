@@ -9,7 +9,7 @@ type RunContext = {
     id: string;
     repoId: string;
     prompt: string;
-    sandbox: "read-only" | "workspace-write";
+    sandbox: "read-only" | "workspace-write" | "danger-full-access";
     branchMode: "current" | "create-per-job";
     kind: "codex" | "test";
     testCommandId?: string;

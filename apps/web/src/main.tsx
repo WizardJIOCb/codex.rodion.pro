@@ -21,6 +21,14 @@ import {
 } from "lucide-react";
 import "./styles.css";
 
+type Sandbox = "read-only" | "workspace-write" | "danger-full-access";
+const SANDBOXES: Sandbox[] = ["read-only", "workspace-write", "danger-full-access"];
+const SANDBOX_LABELS: Record<Sandbox, string> = {
+  "read-only": "read-only",
+  "workspace-write": "workspace-write",
+  "danger-full-access": "full-access"
+};
+
 type Agent = {
   id: string;
   name: string;
@@ -40,8 +48,8 @@ type Repo = {
   domain?: string;
   currentBranch?: string;
   dirty: boolean;
-  defaultSandbox: "read-only" | "workspace-write";
-  allowedSandboxes: Array<"read-only" | "workspace-write">;
+  defaultSandbox: Sandbox;
+  allowedSandboxes: Sandbox[];
   testCommands: Array<{ id: string; label: string }>;
 };
 
@@ -158,7 +166,7 @@ function App() {
   const [prompt, setPrompt] = useState("");
   const [repoKey, setRepoKey] = useState("");
   const [activeChatId, setActiveChatId] = useState("");
-  const [sandbox, setSandbox] = useState<"read-only" | "workspace-write">("workspace-write");
+  const [sandbox, setSandbox] = useState<Sandbox>("danger-full-access");
   const [busy, setBusy] = useState(false);
   const [projectPanel, setProjectPanel] = useState<"new" | "settings" | null>(null);
   const [projectName, setProjectName] = useState("");
@@ -348,7 +356,7 @@ function App() {
       serverPath: projectServerPath.trim(),
       domain: projectDomain.trim(),
       defaultSandbox: sandbox,
-      allowedSandboxes: ["read-only", "workspace-write"]
+      allowedSandboxes: SANDBOXES
     };
     if (isNew || projectPath.trim() !== originalProjectPath) body.path = projectPath.trim();
     const response = await api(isNew ? "/api/projects" : `/api/projects/${selectedRepo?.agentId}/${selectedRepo?.id}`, {
@@ -363,7 +371,7 @@ function App() {
     setProjectPanel(null);
     if (isNew && data.repoId) {
       setRepoKey(`${selectedAgent.id}:${data.repoId}`);
-      setSandbox("workspace-write");
+      setSandbox("danger-full-access");
     }
   }
 
@@ -561,8 +569,8 @@ function App() {
             <input placeholder="project.domain" value={projectDomain} onChange={(event) => setProjectDomain(event.target.value)} />
           </label>
           <div className="segments">
-            {(["read-only", "workspace-write"] as const).map((item) => (
-              <button className={sandbox === item ? "active" : ""} key={item} type="button" onClick={() => setSandbox(item)}>{item}</button>
+            {SANDBOXES.map((item) => (
+              <button className={sandbox === item ? "active" : ""} key={item} type="button" onClick={() => setSandbox(item)}>{SANDBOX_LABELS[item]}</button>
             ))}
           </div>
           <button disabled={busy || !online} type="submit"><Save size={16} /> Save project</button>
@@ -609,7 +617,7 @@ function App() {
                 <form className="composer" onSubmit={createJob}>
                   <div className="segments">
                     {selectedRepo.allowedSandboxes.map((item) => (
-                      <button className={sandbox === item ? "active" : ""} key={item} type="button" onClick={() => setSandbox(item)}>{item}</button>
+                      <button className={sandbox === item ? "active" : ""} key={item} type="button" onClick={() => setSandbox(item)}>{SANDBOX_LABELS[item]}</button>
                     ))}
                   </div>
                   <textarea placeholder={`Напиши задачу в чат "${activeChat.title}"...`} value={prompt} onChange={(event) => setPrompt(event.target.value)} />

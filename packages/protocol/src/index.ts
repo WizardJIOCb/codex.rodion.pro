@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const SandboxSchema = z.enum(["read-only", "workspace-write"]);
+export const SandboxSchema = z.enum(["read-only", "workspace-write", "danger-full-access"]);
 export type Sandbox = z.infer<typeof SandboxSchema>;
 
 export const JobStatusSchema = z.enum([
@@ -172,8 +172,8 @@ export const ServerProjectCreateSchema = z.object({
     githubUrl: z.string().max(300).optional(),
     serverPath: z.string().max(260).optional(),
     domain: z.string().max(253).optional(),
-    defaultSandbox: SandboxSchema.default("workspace-write"),
-    allowedSandboxes: z.array(SandboxSchema).min(1).default(["read-only", "workspace-write"])
+    defaultSandbox: SandboxSchema.default("danger-full-access"),
+    allowedSandboxes: z.array(SandboxSchema).min(1).default(["read-only", "workspace-write", "danger-full-access"])
   })
 });
 
@@ -241,7 +241,7 @@ export const CreateProjectSchema = z.object({
   githubUrl: z.string().max(300).optional(),
   serverPath: z.string().max(260).optional(),
   domain: z.string().max(253).optional(),
-  defaultSandbox: SandboxSchema.default("workspace-write")
+  defaultSandbox: SandboxSchema.default("danger-full-access")
 });
 export type CreateProject = z.infer<typeof CreateProjectSchema>;
 

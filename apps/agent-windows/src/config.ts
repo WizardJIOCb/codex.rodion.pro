@@ -29,8 +29,8 @@ const RepoConfigSchema = z.object({
   serverPath: z.string().max(260).optional(),
   domain: z.string().max(253).optional(),
   deploy: DeployConfigSchema.optional(),
-  defaultSandbox: z.enum(["read-only", "workspace-write"]),
-  allowedSandboxes: z.array(z.enum(["read-only", "workspace-write"])).min(1),
+  defaultSandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]),
+  allowedSandboxes: z.array(z.enum(["read-only", "workspace-write", "danger-full-access"])).min(1),
   testCommands: z.array(TestCommandSchema).default([])
 });
 

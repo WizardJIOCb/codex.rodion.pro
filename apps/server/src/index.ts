@@ -439,7 +439,7 @@ async function createApp(): Promise<FastifyInstance> {
           serverPath: parsed.data.serverPath?.trim() || undefined,
           domain: parsed.data.domain?.trim() || undefined,
           defaultSandbox: parsed.data.defaultSandbox,
-          allowedSandboxes: ["read-only", "workspace-write"]
+          allowedSandboxes: ["read-only", "workspace-write", "danger-full-access"]
         }
       });
       if (!result.ok) return reply.code(400).send({ error: result.error ?? "project_create_failed" });
