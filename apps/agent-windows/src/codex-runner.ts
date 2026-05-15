@@ -93,6 +93,7 @@ export class Runner {
         windowsHide: true,
         env: minimalEnv()
       });
+      this.child.stdin.end();
       let finalMessage = "";
       const timer = setTimeout(() => {
         this.cancelled = true;
