@@ -49,7 +49,9 @@ function connect() {
 
   ws.on("open", async () => {
     console.log(`Connected to ${config.serverUrl}`);
-    setTimeout(async () => send(await hello()), 150);
+    for (const delay of [250, 1000, 3000]) {
+      setTimeout(async () => send(await hello()), delay);
+    }
   });
 
   ws.on("message", async (raw) => {
