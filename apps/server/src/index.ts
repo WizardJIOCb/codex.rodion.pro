@@ -61,6 +61,7 @@ const gitRequests = new Map<string, {
   reject: (error: Error) => void;
   timer: NodeJS.Timeout;
 }>();
+const STALE_JOB_GRACE_MS = 2 * 60 * 1000;
 
 function broadcast(event: UiEvent): void {
   for (const client of uiClients) client.send(event);
@@ -178,19 +179,24 @@ function appendChatMessage(message: Omit<ChatMessageRow, "id"> & { id?: string }
   broadcast({ type: "chats.updated", agentId: chatAgentId(message.chat_id), repoId: chatRepoId(message.chat_id) });
 }
 
-function clearOrphanedAgentJobs(agentId: string, currentJobId: string | undefined): void {
+function clearOrphanedAgentJobs(agentId: string, currentJobId: string | undefined, reason = "Agent heartbeat has no active job; marking stale job as disconnected."): void {
   if (currentJobId) return;
-  const rows = db.prepare("SELECT id FROM jobs WHERE agent_id = ? AND status IN ('assigned','running')")
-    .all(agentId) as Array<{ id: string }>;
-  if (!rows.length) return;
+  const rows = db.prepare("SELECT id, created_at, started_at FROM jobs WHERE agent_id = ? AND status IN ('assigned','running')")
+    .all(agentId) as Array<{ id: string; created_at: string; started_at: string | null }>;
+  const cutoff = Date.now() - STALE_JOB_GRACE_MS;
+  const staleRows = rows.filter((row) => {
+    const timestamp = Date.parse(row.started_at ?? row.created_at);
+    return Number.isFinite(timestamp) && timestamp < cutoff;
+  });
+  if (!staleRows.length) return;
   const stamp = nowIso();
-  db.prepare("UPDATE jobs SET status='agent_disconnected', finished_at=? WHERE agent_id=? AND status IN ('assigned','running')")
-    .run(stamp, agentId);
-  for (const row of rows) {
+  const update = db.prepare("UPDATE jobs SET status='agent_disconnected', finished_at=? WHERE id=? AND status IN ('assigned','running')");
+  for (const row of staleRows) {
+    update.run(stamp, row.id);
     appendLog({
       job_id: row.id,
       stream: "system",
-      message: "Agent heartbeat has no active job; marking stale job as disconnected.",
+      message: reason,
       at: stamp
     });
     broadcast({ type: "job.updated", jobId: row.id, status: "agent_disconnected" });
@@ -715,8 +721,10 @@ async function createApp(): Promise<FastifyInstance> {
       agents.delete(agent.id);
       markAgentStatus(agent.id, "offline");
       db.prepare("UPDATE agents SET current_job_id = NULL WHERE id = ?").run(agent.id);
-      db.prepare("UPDATE jobs SET status='agent_disconnected', finished_at=? WHERE agent_id=? AND status IN ('assigned','running')")
-        .run(nowIso(), agent.id);
+      setTimeout(() => {
+        if (agents.has(agent.id)) return;
+        clearOrphanedAgentJobs(agent.id, undefined, "Agent socket stayed disconnected; marking stale job as disconnected.");
+      }, STALE_JOB_GRACE_MS + 1000);
     });
   });
 
