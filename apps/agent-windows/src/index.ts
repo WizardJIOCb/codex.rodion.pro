@@ -40,6 +40,74 @@ async function sendProjectResult(
   });
 }
 
+async function sendGitResult(
+  send: (message: AgentToServer) => void,
+  requestId: string,
+  ok: boolean,
+  output: string,
+  error?: string
+) {
+  send({
+    type: "git.result",
+    requestId,
+    ok,
+    output: redact(output),
+    error: error ? redact(error) : undefined,
+    status: ok ? await gitStatusLineFromOutput(output) : undefined,
+    repos: ok ? await scanRepos(config) : undefined
+  });
+}
+
+async function gitStatusLineFromOutput(output: string): Promise<string> {
+  const lastLine = output.trim().split(/\r?\n/).filter(Boolean).at(-1);
+  return lastLine ?? "Git sync completed.";
+}
+
+async function gitSync(repoId: string, message: string, remoteUrl?: string): Promise<string> {
+  const repo = config.repos.find((item) => item.id === repoId);
+  if (!repo) throw new Error("Project not found in agent config.");
+  await ensureGitRepo(repo.path);
+
+  const output: string[] = [];
+  const runGit = async (args: string[], timeoutMs = 60000, allowExitCodes = [0]) => {
+    const result = await runCapture("git", ["-C", repo.path, ...args], undefined, timeoutMs);
+    const text = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join("\n");
+    output.push(`$ git ${args.join(" ")}`);
+    if (text) output.push(text);
+    if (!allowExitCodes.includes(result.exitCode ?? -1)) {
+      throw new Error(text || `git ${args.join(" ")} failed with exit code ${result.exitCode}`);
+    }
+    return result;
+  };
+
+  if (remoteUrl) {
+    const currentRemote = await runGit(["remote", "get-url", "origin"], 15000, [0, 2, 128]);
+    if (currentRemote.exitCode === 0) await runGit(["remote", "set-url", "origin", remoteUrl], 15000);
+    else await runGit(["remote", "add", "origin", remoteUrl], 15000);
+  } else {
+    await runGit(["remote", "get-url", "origin"], 15000);
+  }
+
+  await runGit(["add", "-A"], 60000);
+  const staged = await runGit(["diff", "--cached", "--quiet"], 30000, [0, 1]);
+  if (staged.exitCode === 1) {
+    await runGit(["commit", "-m", message], 120000);
+  } else {
+    output.push("No staged changes to commit.");
+  }
+
+  const upstream = await runGit(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], 15000, [0, 128]);
+  let branch = (await runGit(["branch", "--show-current"], 15000)).stdout.trim();
+  if (!branch) branch = "main";
+  if (upstream.exitCode !== 0 && branch === "master") {
+    await runGit(["branch", "-M", "main"], 30000);
+    branch = "main";
+  }
+  await runGit(["push", "-u", "origin", branch], 120000);
+  const status = await runGit(["status", "--short", "--branch"], 15000);
+  return [...output, status.stdout.trim() || "Git sync completed."].filter(Boolean).join("\n");
+}
+
 async function toolVersion(command: string, args = ["--version"]): Promise<string | undefined> {
   const result = await runCapture(command, args, undefined, 15000);
   return (result.stdout || result.stderr).trim().split(/\r?\n/)[0];
@@ -138,6 +206,16 @@ function connect() {
         await sendProjectResult(send, message.requestId, true);
       } catch (error) {
         await sendProjectResult(send, message.requestId, false, error instanceof Error ? error.message : String(error));
+      }
+      return;
+    }
+
+    if (message.type === "git.sync") {
+      try {
+        const output = await gitSync(message.repoId, message.message, message.remoteUrl);
+        await sendGitResult(send, message.requestId, true, output);
+      } catch (error) {
+        await sendGitResult(send, message.requestId, false, "", error instanceof Error ? error.message : String(error));
       }
       return;
     }

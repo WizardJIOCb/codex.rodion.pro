@@ -85,13 +85,24 @@ export const AgentProjectResultSchema = z.object({
   repos: z.array(RepoInfoSchema).optional()
 });
 
+export const AgentGitResultSchema = z.object({
+  type: z.literal("git.result"),
+  requestId: z.string().min(1),
+  ok: z.boolean(),
+  error: z.string().optional(),
+  output: z.string().optional(),
+  status: z.string().optional(),
+  repos: z.array(RepoInfoSchema).optional()
+});
+
 export const AgentToServerSchema = z.discriminatedUnion("type", [
   AgentHelloSchema,
   AgentHeartbeatSchema,
   AgentJobLogSchema,
   AgentJobProgressSchema,
   AgentJobDoneSchema,
-  AgentProjectResultSchema
+  AgentProjectResultSchema,
+  AgentGitResultSchema
 ]);
 export type AgentToServer = z.infer<typeof AgentToServerSchema>;
 
@@ -138,11 +149,20 @@ export const ServerProjectUpdateSchema = z.object({
   })
 });
 
+export const ServerGitSyncSchema = z.object({
+  type: z.literal("git.sync"),
+  requestId: z.string().min(1),
+  repoId: z.string().min(1),
+  message: z.string().min(1).max(200),
+  remoteUrl: z.string().max(300).optional()
+});
+
 export const ServerToAgentSchema = z.discriminatedUnion("type", [
   ServerJobRunSchema,
   ServerJobCancelSchema,
   ServerProjectCreateSchema,
   ServerProjectUpdateSchema,
+  ServerGitSyncSchema,
   z.object({ type: z.literal("repo.scan") })
 ]);
 export type ServerToAgent = z.infer<typeof ServerToAgentSchema>;
@@ -179,6 +199,12 @@ export const UpdateProjectSchema = z.object({
   allowedSandboxes: z.array(SandboxSchema).min(1).optional()
 });
 export type UpdateProject = z.infer<typeof UpdateProjectSchema>;
+
+export const GitSyncSchema = z.object({
+  message: z.string().min(1).max(200),
+  remoteUrl: z.string().max(300).optional()
+});
+export type GitSync = z.infer<typeof GitSyncSchema>;
 
 export const UiEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("agent.status"), agentId: z.string(), status: z.enum(["online", "offline"]) }),

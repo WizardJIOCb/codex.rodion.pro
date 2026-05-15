@@ -378,6 +378,48 @@ label {
   overflow-wrap: anywhere;
 }
 
+.git-panel {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto;
+  gap: 6px;
+  align-items: start;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid #d9d9e3;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.git-panel input {
+  min-height: 36px;
+  padding-block: 7px;
+}
+
+.git-panel button {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  color: #ffffff;
+  background: #10a37f;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.git-panel pre {
+  grid-column: 1 / -1;
+  max-height: 130px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid #d9d9e3;
+  border-radius: 6px;
+  background: #fcfcfd;
+  font-size: 12px;
+}
+
 .segments,
 .chips {
   display: flex;
@@ -658,6 +700,10 @@ button:disabled {
   .chips button {
     max-width: none;
     width: 100%;
+  }
+
+  .git-panel {
+    grid-template-columns: 1fr;
   }
 
   .workspace {

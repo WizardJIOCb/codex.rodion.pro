@@ -15,6 +15,7 @@ import {
   Save,
   Settings,
   Square,
+  UploadCloud,
   Wifi,
   WifiOff
 } from "lucide-react";
@@ -125,6 +126,10 @@ function App() {
   const [projectPath, setProjectPath] = useState("");
   const [originalProjectPath, setOriginalProjectPath] = useState("");
   const [chatTitle, setChatTitle] = useState("");
+  const [gitMessage, setGitMessage] = useState("Update project");
+  const [gitRemoteUrl, setGitRemoteUrl] = useState("");
+  const [gitNotice, setGitNotice] = useState("");
+  const [gitBusy, setGitBusy] = useState(false);
 
   const selectedRepo = useMemo(() => repos.find((repo) => `${repo.agentId}:${repo.id}` === repoKey), [repoKey, repos]);
   const activeChat = useMemo(() => chats.find((chat) => chat.id === activeChatId), [activeChatId, chats]);
@@ -189,6 +194,9 @@ function App() {
   function selectProject(repo: Repo) {
     setRepoKey(`${repo.agentId}:${repo.id}`);
     setSandbox(repo.defaultSandbox);
+    setGitMessage(`Update ${repo.name}`);
+    setGitRemoteUrl("");
+    setGitNotice("");
     setActiveChatId("");
     setJobs([]);
     setActiveJob(null);
@@ -205,6 +213,7 @@ function App() {
     setActiveJob(null);
     setLogs([]);
     setProjectPanel(null);
+    setGitNotice("");
   }
 
   function openNewProject() {
@@ -349,6 +358,30 @@ function App() {
     });
   }
 
+  async function syncGit(event: React.FormEvent) {
+    event.preventDefault();
+    if (!selectedRepo || !csrf || !gitMessage.trim()) return;
+    setGitBusy(true);
+    setGitNotice("Git sync started...");
+    const response = await api(`/api/projects/${selectedRepo.agentId}/${selectedRepo.id}/git-sync`, {
+      method: "POST",
+      headers: { "x-csrf-token": csrf },
+      body: JSON.stringify({
+        message: gitMessage.trim(),
+        remoteUrl: gitRemoteUrl.trim() || undefined
+      })
+    });
+    const data = await response.json().catch(() => ({}));
+    setGitBusy(false);
+    if (!response.ok) {
+      setGitNotice(data.output || data.error || "Git sync failed.");
+      return;
+    }
+    setGitRemoteUrl("");
+    setGitNotice(data.output || data.status || "Git sync completed.");
+    await refresh();
+  }
+
   async function logout() {
     if (csrf) await api("/api/logout", { method: "POST", headers: { "x-csrf-token": csrf }, body: "{}" });
     setCsrf(undefined);
@@ -470,6 +503,12 @@ function App() {
             <div className="repo-meta">
               <GitBranch size={16} /> {selectedRepo.currentBranch || "no branch"} · {selectedRepo.dirty ? "dirty" : "clean"} · {selectedRepo.pathMasked}
             </div>
+            <form className="git-panel" onSubmit={syncGit}>
+              <input aria-label="Commit message" value={gitMessage} onChange={(event) => setGitMessage(event.target.value)} />
+              <input aria-label="Remote URL" placeholder="origin URL, optional" value={gitRemoteUrl} onChange={(event) => setGitRemoteUrl(event.target.value)} />
+              <button disabled={gitBusy || !gitMessage.trim()} type="submit"><UploadCloud size={16} /> Commit & push</button>
+              {gitNotice && <pre>{gitNotice}</pre>}
+            </form>
             {activeChat ? (
               <>
                 <form className="composer" onSubmit={createJob}>
