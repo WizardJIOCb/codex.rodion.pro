@@ -615,7 +615,7 @@ textarea:focus {
 
 .workspace {
   display: grid;
-  grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
   align-items: start;
   min-width: 0;
@@ -1033,10 +1033,6 @@ button:disabled {
   .workspace,
   .project-workspace {
     grid-template-columns: 1fr;
-  }
-
-  .history {
-    order: 2;
   }
 
   .job-detail {

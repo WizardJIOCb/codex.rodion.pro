@@ -745,16 +745,6 @@ function App() {
               <>
                 {chatNotice && <div className="notice danger">{chatNotice}</div>}
                 <section className="workspace">
-                  <aside className="history">
-                    <h2><Activity size={18} /> Jobs</h2>
-                    {jobs.map((job) => (
-                      <button className={activeJob?.id === job.id ? "job active" : "job"} key={job.id} onClick={() => openJob(job)}>
-                        <span>{job.prompt.slice(0, 76)}</span>
-                        <small>{job.status} В· {new Date(job.createdAt).toLocaleString()}</small>
-                      </button>
-                    ))}
-                  </aside>
-
                   <section className="job-detail">
                     <section className="chat-thread">
                       {messages.length ? messages.map((message) => (
@@ -769,6 +759,7 @@ function App() {
                         <div className="empty">Start this chat or wait for local Codex/VS Code history sync.</div>
                       )}
                     </section>
+                    {renderComposer()}
                     {activeJob ? (
                       <>
                         <div className="job-head">
@@ -815,7 +806,6 @@ function App() {
                     ) : (
                       <div className="empty">Р—Р°РїСѓСЃС‚Рё РїРµСЂРІСѓСЋ Р·Р°РґР°С‡Сѓ РІ СЌС‚РѕРј С‡Р°С‚Рµ.</div>
                     )}
-                    {renderComposer()}
                   </section>
                 </section>
               </>
