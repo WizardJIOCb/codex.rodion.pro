@@ -128,6 +128,7 @@ export class Runner {
               continue;
             }
           }
+          if (stream === "stderr" && isIgnorableCodexWarning(line)) continue;
           rawOutputTail = `${rawOutputTail}\n${line}`.slice(-4000);
           context.sendLog(log(context.job.id, stream, line));
           if (stream === "stderr") context.sendProgress(progress(context.job.id, "message", line.slice(0, 500)));
@@ -179,6 +180,10 @@ function codexExecutable(): { command: string; prefixArgs: string[] } {
     return { command: process.env.CMC_CODEX_NODE, prefixArgs: [process.env.CMC_CODEX_JS] };
   }
   return { command: process.env.CMC_CODEX_BIN || "codex", prefixArgs: [] };
+}
+
+function isIgnorableCodexWarning(line: string): boolean {
+  return /ERROR\s+codex_core::session:\s+failed to record rollout items:\s+thread .* not found/i.test(line);
 }
 
 function log(jobId: string, stream: "stdout" | "stderr" | "system", message: string): AgentJobLog {
