@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+﻿import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Activity,
@@ -136,7 +136,7 @@ function defaultProjectPath(name: string) {
   const slug = name
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9а-яё.]+/gi, "-")
+    .replace(/[^a-z0-9Р°-СЏС‘.]+/gi, "-")
     .replace(/\.{2,}/g, ".")
     .replace(/^-+|-+$/g, "");
   return `C:\\Projects\\${slug || "new-project"}`;
@@ -543,17 +543,37 @@ function App() {
     setCsrf(undefined);
   }
 
+  function renderComposer() {
+    if (!selectedRepo) return null;
+    return (
+      <form className="composer" onSubmit={createJob}>
+        <div className="segments">
+          {selectedRepo.allowedSandboxes.map((item) => (
+            <button className={sandbox === item ? "active" : ""} key={item} type="button" onClick={() => setSandbox(item)}>{SANDBOX_LABELS[item]}</button>
+          ))}
+        </div>
+        <textarea placeholder={activeChat ? `РќР°РїРёС€Рё СЃР»РµРґСѓСЋС‰СѓСЋ Р·Р°РґР°С‡Сѓ РІ С‡Р°С‚ "${activeChat.title}"...` : "РќР°РїРёС€Рё РїРµСЂРІСѓСЋ Р·Р°РґР°С‡Сѓ, С‡Р°С‚ СЃРѕР·РґР°СЃС‚СЃСЏ Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё..."} value={prompt} onChange={(event) => setPrompt(event.target.value)} />
+        <div className="sticky-submit">
+          <button disabled={busy || !prompt.trim()} type="submit"><Play size={18} /> Run Codex</button>
+          {activeJob && ["queued", "assigned", "running"].includes(activeJob.status) && (
+            <button className="stop" type="button" onClick={cancelJob}><Square size={18} /> Stop</button>
+          )}
+        </div>
+      </form>
+    );
+  }
+
   if (!csrf) {
     return (
       <main className="login">
         <section className="login-panel">
           <div className="brand-mark"><Bot size={30} /></div>
           <h1>Codex Control</h1>
-          <p>Домашний Codex, управляемый с iPhone.</p>
+          <p>Р”РѕРјР°С€РЅРёР№ Codex, СѓРїСЂР°РІР»СЏРµРјС‹Р№ СЃ iPhone.</p>
           <form onSubmit={login}>
             <input autoComplete="email" placeholder="email" value={email} onChange={(event) => setEmail(event.target.value)} />
             <input autoComplete="current-password" placeholder="password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
-            <button disabled={busy} type="submit"><Play size={18} /> Войти</button>
+            <button disabled={busy} type="submit"><Play size={18} /> Р’РѕР№С‚Рё</button>
           </form>
         </section>
       </main>
@@ -577,7 +597,7 @@ function App() {
                   <div className="nav-project" key={`${repo.agentId}:${repo.id}`}>
                     <button className={selected ? "nav-leaf project active" : "nav-leaf project"} onClick={() => selectProject(repo)}>
                       <span>{repo.name}</span>
-                      <small>{repo.currentBranch || "no branch"} · {repo.dirty ? "dirty" : "clean"}</small>
+                      <small>{repo.currentBranch || "no branch"} В· {repo.dirty ? "dirty" : "clean"}</small>
                     </button>
                     {selected && (
                       <div className="nav-project-chats">
@@ -621,9 +641,9 @@ function App() {
           <h1>{selectedRepo ? selectedRepo.name : "Projects"}</h1>
         </div>
         <div className="top-actions">
-          {selectedRepo && <button className="icon" onClick={clearProjectSelection} title="Проекты"><ArrowLeft size={18} /></button>}
-          <button className="icon" onClick={refresh} title="Обновить"><RefreshCw size={18} /></button>
-          <button className="icon" onClick={logout} title="Выйти"><LogOut size={18} /></button>
+          {selectedRepo && <button className="icon" onClick={clearProjectSelection} title="РџСЂРѕРµРєС‚С‹"><ArrowLeft size={18} /></button>}
+          <button className="icon" onClick={refresh} title="РћР±РЅРѕРІРёС‚СЊ"><RefreshCw size={18} /></button>
+          <button className="icon" onClick={logout} title="Р’С‹Р№С‚Рё"><LogOut size={18} /></button>
         </div>
       </header>
 
@@ -632,7 +652,7 @@ function App() {
           <article className="machine" key={agent.id}>
             <strong>{agent.name}</strong>
             <span>{agent.hostname || agent.id}</span>
-            <small>{agent.codex_version || "codex not probed"} · {agent.git_version || "git not probed"}</small>
+            <small>{agent.codex_version || "codex not probed"} В· {agent.git_version || "git not probed"}</small>
           </article>
         ))}
       </section>
@@ -648,14 +668,14 @@ function App() {
               <article className="project-card" key={`${repo.agentId}:${repo.id}`}>
                 <button className="project-main" onClick={() => selectProject(repo)}>
                   <strong>{repo.name}</strong>
-                  <span><GitBranch size={14} /> {repo.currentBranch || "no branch"} · {repo.dirty ? "dirty" : "clean"}</span>
+                  <span><GitBranch size={14} /> {repo.currentBranch || "no branch"} В· {repo.dirty ? "dirty" : "clean"}</span>
                   <small>{repo.pathMasked}</small>
                   {repo.domain && <small>{repo.domain}</small>}
                 </button>
                 <button className="icon tiny" onClick={() => {
                   setRepoKey(`${repo.agentId}:${repo.id}`);
                   openProjectSettings(repo);
-                }} title="Настройки проекта"><Settings size={16} /></button>
+                }} title="РќР°СЃС‚СЂРѕР№РєРё РїСЂРѕРµРєС‚Р°"><Settings size={16} /></button>
               </article>
             ))}
           </div>
@@ -706,12 +726,12 @@ function App() {
           <section className="chat-work">
             <div className="section-head">
               <h2><MessageSquare size={18} /> {activeChat?.title ?? "Project chat"}</h2>
-              <button className="icon tiny" onClick={() => openProjectSettings(selectedRepo)} title="Настройки"><Settings size={16} /></button>
+              <button className="icon tiny" onClick={() => openProjectSettings(selectedRepo)} title="РќР°СЃС‚СЂРѕР№РєРё"><Settings size={16} /></button>
             </div>
             <div className="repo-meta">
-              <GitBranch size={16} /> {selectedRepo.currentBranch || "no branch"} · {selectedRepo.dirty ? "dirty" : "clean"} · {selectedRepo.pathMasked}
-              {selectedRepo.domain && <> · {selectedRepo.domain}</>}
-              {selectedRepo.serverPath && <> · {selectedRepo.serverPath}</>}
+              <GitBranch size={16} /> {selectedRepo.currentBranch || "no branch"} В· {selectedRepo.dirty ? "dirty" : "clean"} В· {selectedRepo.pathMasked}
+              {selectedRepo.domain && <> В· {selectedRepo.domain}</>}
+              {selectedRepo.serverPath && <> В· {selectedRepo.serverPath}</>}
             </div>
             <form className="git-panel" onSubmit={syncGit}>
               <input aria-label="Commit message" value={gitMessage} onChange={(event) => setGitMessage(event.target.value)} />
@@ -721,21 +741,6 @@ function App() {
               {gitNotice && <pre>{gitNotice}</pre>}
               {deployNotice && <pre>{deployNotice}</pre>}
             </form>
-            <form className="composer" onSubmit={createJob}>
-              <div className="segments">
-                {selectedRepo.allowedSandboxes.map((item) => (
-                  <button className={sandbox === item ? "active" : ""} key={item} type="button" onClick={() => setSandbox(item)}>{SANDBOX_LABELS[item]}</button>
-                ))}
-              </div>
-              <textarea placeholder={activeChat ? `Напиши следующую задачу в чат "${activeChat.title}"...` : "Напиши первую задачу, чат создастся автоматически..."} value={prompt} onChange={(event) => setPrompt(event.target.value)} />
-              <div className="sticky-submit">
-                <button disabled={busy || !prompt.trim()} type="submit"><Play size={18} /> Run Codex</button>
-                {activeJob && ["queued", "assigned", "running"].includes(activeJob.status) && (
-                  <button className="stop" type="button" onClick={cancelJob}><Square size={18} /> Stop</button>
-                )}
-              </div>
-            </form>
-
             {activeChat ? (
               <>
                 {chatNotice && <div className="notice danger">{chatNotice}</div>}
@@ -745,7 +750,7 @@ function App() {
                     {jobs.map((job) => (
                       <button className={activeJob?.id === job.id ? "job active" : "job"} key={job.id} onClick={() => openJob(job)}>
                         <span>{job.prompt.slice(0, 76)}</span>
-                        <small>{job.status} · {new Date(job.createdAt).toLocaleString()}</small>
+                        <small>{job.status} В· {new Date(job.createdAt).toLocaleString()}</small>
                       </button>
                     ))}
                   </aside>
@@ -808,13 +813,17 @@ function App() {
                         </div>
                       </>
                     ) : (
-                      <div className="empty">Запусти первую задачу в этом чате.</div>
+                      <div className="empty">Р—Р°РїСѓСЃС‚Рё РїРµСЂРІСѓСЋ Р·Р°РґР°С‡Сѓ РІ СЌС‚РѕРј С‡Р°С‚Рµ.</div>
                     )}
+                    {renderComposer()}
                   </section>
                 </section>
               </>
             ) : (
-              <div className="empty">Нет выбранного чата. Первое сообщение создаст чат, следующие продолжат его.</div>
+              <>
+                <div className="empty">Нет выбранного чата. Первое сообщение создаст чат, следующие продолжат его.</div>
+                {renderComposer()}
+              </>
             )}
           </section>
         </section>
