@@ -945,6 +945,21 @@ pre {
   color: var(--muted);
 }
 
+.notice {
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #0e1513;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.notice.danger {
+  border-color: rgba(248, 113, 113, 0.35);
+  background: rgba(248, 113, 113, 0.08);
+  color: #fecaca;
+}
+
 label {
   display: grid;
   gap: 5px;

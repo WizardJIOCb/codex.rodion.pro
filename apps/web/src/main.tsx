@@ -190,6 +190,7 @@ function App() {
   const [gitBusy, setGitBusy] = useState(false);
   const [deployNotice, setDeployNotice] = useState("");
   const [deployBusy, setDeployBusy] = useState(false);
+  const [chatNotice, setChatNotice] = useState("");
 
   const selectedRepo = useMemo(() => repos.find((repo) => `${repo.agentId}:${repo.id}` === repoKey), [repoKey, repos]);
   const activeChat = useMemo(() => chats.find((chat) => chat.id === activeChatId), [activeChatId, chats]);
@@ -460,12 +461,18 @@ function App() {
     const activeInChat = activeJob?.chatId === chat.id && ["queued", "assigned", "running"].includes(activeJob.status);
     if (activeInChat) return;
     setBusy(true);
+    setChatNotice("");
     const response = await api(`/api/chats/${chat.id}`, {
       method: "DELETE",
-      headers: { "x-csrf-token": csrf }
+      headers: { "x-csrf-token": csrf },
+      body: "{}"
     });
+    const data = await response.json().catch(() => ({}));
     setBusy(false);
-    if (!response.ok) return;
+    if (!response.ok) {
+      setChatNotice(data.error === "chat_has_running_job" ? "Stop the running job before deleting this chat." : data.error || "Chat delete failed.");
+      return;
+    }
     const nextChats = chats.filter((item) => item.id !== chat.id);
     setChats(nextChats);
     if (activeChatId === chat.id) {
@@ -731,6 +738,7 @@ function App() {
 
             {activeChat ? (
               <>
+                {chatNotice && <div className="notice danger">{chatNotice}</div>}
                 <section className="workspace">
                   <aside className="history">
                     <h2><Activity size={18} /> Jobs</h2>
