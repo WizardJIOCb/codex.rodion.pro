@@ -980,17 +980,11 @@ button:disabled {
 
 @media (max-width: 1180px) {
   .app-frame {
-    grid-template-columns: 76px minmax(0, 1fr);
+    grid-template-columns: minmax(232px, 270px) minmax(0, 1fr);
   }
 
   .app-nav {
     padding: 10px;
-  }
-
-  .nav-brand strong,
-  .nav-item:not(.active) span,
-  .nav-agent {
-    display: none;
   }
 
   .agent-console {
@@ -1007,13 +1001,14 @@ button:disabled {
   .app-nav {
     position: static;
     height: auto;
-    grid-template-columns: auto 1fr;
-    grid-template-rows: auto;
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto;
   }
 
   .app-nav nav {
-    display: flex;
-    overflow-x: auto;
+    display: grid;
+    max-height: 42vh;
+    overflow: auto;
   }
 
   .nav-brand strong {
