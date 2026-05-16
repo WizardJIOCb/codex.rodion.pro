@@ -595,11 +595,11 @@ function App() {
         <section className="login-panel">
           <div className="brand-mark"><Bot size={30} /></div>
           <h1>Codex Control</h1>
-          <p>Р”РѕРјР°С€РЅРёР№ Codex, СѓРїСЂР°РІР»СЏРµРјС‹Р№ СЃ iPhone.</p>
+          <p>Домашний Codex, управляемый с iPhone.</p>
           <form onSubmit={login}>
             <input autoComplete="email" placeholder="email" value={email} onChange={(event) => setEmail(event.target.value)} />
             <input autoComplete="current-password" placeholder="password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
-            <button disabled={busy} type="submit"><Play size={18} /> Р’РѕР№С‚Рё</button>
+            <button disabled={busy} type="submit"><Play size={18} /> Войти</button>
           </form>
         </section>
       </main>
@@ -623,7 +623,7 @@ function App() {
                   <div className="nav-project" key={`${repo.agentId}:${repo.id}`}>
                     <button className={selected ? "nav-leaf project active" : "nav-leaf project"} onClick={() => selectProject(repo)}>
                       <span>{repo.name}</span>
-                      <small>{repo.currentBranch || "no branch"} В· {repo.dirty ? "dirty" : "clean"}</small>
+                      <small>{repo.currentBranch || "no branch"} · {repo.dirty ? "dirty" : "clean"}</small>
                     </button>
                     {selected && (
                       <div className="nav-project-chats">
@@ -667,9 +667,9 @@ function App() {
           <h1>{selectedRepo ? selectedRepo.name : "Projects"}</h1>
         </div>
         <div className="top-actions">
-          {selectedRepo && <button className="icon" onClick={clearProjectSelection} title="РџСЂРѕРµРєС‚С‹"><ArrowLeft size={18} /></button>}
-          <button className="icon" onClick={refresh} title="РћР±РЅРѕРІРёС‚СЊ"><RefreshCw size={18} /></button>
-          <button className="icon" onClick={logout} title="Р’С‹Р№С‚Рё"><LogOut size={18} /></button>
+          {selectedRepo && <button className="icon" onClick={clearProjectSelection} title="Проекты"><ArrowLeft size={18} /></button>}
+          <button className="icon" onClick={refresh} title="Обновить"><RefreshCw size={18} /></button>
+          <button className="icon" onClick={logout} title="Выйти"><LogOut size={18} /></button>
         </div>
       </header>
 
@@ -678,7 +678,7 @@ function App() {
           <article className="machine" key={agent.id}>
             <strong>{agent.name}</strong>
             <span>{agent.hostname || agent.id}</span>
-            <small>{agent.codex_version || "codex not probed"} В· {agent.git_version || "git not probed"}</small>
+            <small>{agent.codex_version || "codex not probed"} · {agent.git_version || "git not probed"}</small>
           </article>
         ))}
       </section>
@@ -694,14 +694,14 @@ function App() {
               <article className="project-card" key={`${repo.agentId}:${repo.id}`}>
                 <button className="project-main" onClick={() => selectProject(repo)}>
                   <strong>{repo.name}</strong>
-                  <span><GitBranch size={14} /> {repo.currentBranch || "no branch"} В· {repo.dirty ? "dirty" : "clean"}</span>
+                  <span><GitBranch size={14} /> {repo.currentBranch || "no branch"} · {repo.dirty ? "dirty" : "clean"}</span>
                   <small>{repo.pathMasked}</small>
                   {repo.domain && <small>{repo.domain}</small>}
                 </button>
                 <button className="icon tiny" onClick={() => {
                   setRepoKey(`${repo.agentId}:${repo.id}`);
                   openProjectSettings(repo);
-                }} title="РќР°СЃС‚СЂРѕР№РєРё РїСЂРѕРµРєС‚Р°"><Settings size={16} /></button>
+                }} title="Настройки проекта"><Settings size={16} /></button>
               </article>
             ))}
           </div>
@@ -756,12 +756,12 @@ function App() {
           <section className="chat-work">
             <div className="section-head">
               <h2><MessageSquare size={18} /> {activeChat?.title ?? "Project chat"}</h2>
-              <button className="icon tiny" onClick={() => openProjectSettings(selectedRepo)} title="РќР°СЃС‚СЂРѕР№РєРё"><Settings size={16} /></button>
+              <button className="icon tiny" onClick={() => openProjectSettings(selectedRepo)} title="Настройки"><Settings size={16} /></button>
             </div>
             <div className="repo-meta">
-              <GitBranch size={16} /> {selectedRepo.currentBranch || "no branch"} В· {selectedRepo.dirty ? "dirty" : "clean"} В· {selectedRepo.pathMasked}
-              {selectedRepo.domain && <> В· {selectedRepo.domain}</>}
-              {selectedRepo.serverPath && <> В· {selectedRepo.serverPath}</>}
+              <GitBranch size={16} /> {selectedRepo.currentBranch || "no branch"} · {selectedRepo.dirty ? "dirty" : "clean"} · {selectedRepo.pathMasked}
+              {selectedRepo.domain && <> · {selectedRepo.domain}</>}
+              {selectedRepo.serverPath && <> · {selectedRepo.serverPath}</>}
             </div>
             <form className="git-panel" onSubmit={syncGit}>
               <input aria-label="Commit message" value={gitMessage} onChange={(event) => setGitMessage(event.target.value)} />
@@ -786,7 +786,7 @@ function App() {
                           <p>{message.content}</p>
                         </article>
                       )) : (
-                        <div className="empty">Start this chat or wait for local Codex/VS Code history sync.</div>
+                        <div className="empty">Начни этот чат или дождись синхронизации истории из локального Codex/VS Code.</div>
                       )}
                     </section>
                     {renderComposer()}
@@ -834,7 +834,7 @@ function App() {
                         </div>
                       </>
                     ) : (
-                      <div className="empty">Р—Р°РїСѓСЃС‚Рё РїРµСЂРІСѓСЋ Р·Р°РґР°С‡Сѓ РІ СЌС‚РѕРј С‡Р°С‚Рµ.</div>
+                      <div className="empty">Запусти первую задачу в этом чате.</div>
                     )}
                   </section>
                 </section>
