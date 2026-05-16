@@ -233,14 +233,19 @@ function App() {
     }
   }
 
-  async function loadChat(chatId: string) {
+  async function loadChat(chatId: string, preferredJobId?: string) {
     const response = await api(`/api/chats/${chatId}`);
     if (!response.ok) return;
     const data = await response.json();
+    setChats((current) => {
+      const withoutLoaded = current.filter((chat) => chat.id !== data.chat.id);
+      return [data.chat, ...withoutLoaded].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+    });
     setActiveChatId(chatId);
     setJobs(data.jobs);
     setMessages(data.messages ?? []);
-    if (data.jobs[0]) await loadJob(data.jobs[0].id);
+    const targetJobId = preferredJobId ?? data.jobs[0]?.id;
+    if (targetJobId) await loadJob(targetJobId);
     else {
       setActiveJob(null);
       setLogs([]);
@@ -253,6 +258,11 @@ function App() {
     const data = await response.json();
     setActiveJob(data.job);
     setLogs(data.logs);
+  }
+
+  async function openJob(job: Job) {
+    if (job.chatId) await loadChat(job.chatId, job.id);
+    else await loadJob(job.id);
   }
 
   function selectProject(repo: Repo) {
@@ -440,8 +450,7 @@ function App() {
     if (!response.ok) return;
     const { jobId } = await response.json();
     setPrompt("");
-    await loadJob(jobId);
-    await loadChat(targetChatId);
+    await loadChat(targetChatId, jobId);
   }
 
   async function cancelJob() {
@@ -695,7 +704,7 @@ function App() {
                   <aside className="history">
                     <h2><Activity size={18} /> Jobs</h2>
                     {jobs.map((job) => (
-                      <button className={activeJob?.id === job.id ? "job active" : "job"} key={job.id} onClick={() => loadJob(job.id)}>
+                      <button className={activeJob?.id === job.id ? "job active" : "job"} key={job.id} onClick={() => openJob(job)}>
                         <span>{job.prompt.slice(0, 76)}</span>
                         <small>{job.status} · {new Date(job.createdAt).toLocaleString()}</small>
                       </button>
@@ -815,7 +824,7 @@ function App() {
           </div>
           <div className="compact-runs">
             {jobs.slice(0, 6).map((job) => (
-              <button className="compact-run" key={job.id} onClick={() => loadJob(job.id)}>
+              <button className="compact-run" key={job.id} onClick={() => openJob(job)}>
                 <span>{job.prompt.slice(0, 56)}</span>
                 <small className={job.status}>{job.status}</small>
               </button>
