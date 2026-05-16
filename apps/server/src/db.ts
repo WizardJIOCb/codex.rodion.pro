@@ -202,6 +202,14 @@ export function openDb(path: string): DatabaseSync {
       message TEXT NOT NULL,
       at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS deleted_chat_sync (
+      agent_id TEXT NOT NULL,
+      repo_id TEXT NOT NULL,
+      source TEXT NOT NULL,
+      external_id TEXT NOT NULL,
+      deleted_at TEXT NOT NULL,
+      PRIMARY KEY (agent_id, repo_id, source, external_id)
+    );
     CREATE INDEX IF NOT EXISTS idx_jobs_agent_status ON jobs(agent_id, status, created_at);
     CREATE INDEX IF NOT EXISTS idx_chats_repo_updated ON chats(agent_id, repo_id, updated_at);
     CREATE INDEX IF NOT EXISTS idx_logs_job_at ON job_logs(job_id, at);

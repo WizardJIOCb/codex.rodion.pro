@@ -252,6 +252,9 @@ function serializeMessage(message: ChatMessageRow) {
 function upsertSyncedChat(agentId: string, sync: Extract<AgentToServer, { type: "chat.sync" }>): void {
   const repo = db.prepare("SELECT * FROM repos WHERE agent_id = ? AND id = ?").get(agentId, sync.repoId) as RepoRow | undefined;
   if (!repo) return;
+  const tombstone = db.prepare("SELECT 1 FROM deleted_chat_sync WHERE agent_id = ? AND repo_id = ? AND source = ? AND external_id = ?")
+    .get(agentId, sync.repoId, sync.source, sync.externalId) as { 1: number } | undefined;
+  if (tombstone) return;
   const stamp = nowIso();
   const linkedChat = sync.source === "codex"
     ? db.prepare(`
@@ -298,6 +301,18 @@ function upsertSyncedChat(agentId: string, sync: Extract<AgentToServer, { type: 
   }
   db.prepare("UPDATE chats SET updated_at = ? WHERE id = ?").run(sync.updatedAt || stamp, chat.id);
   broadcast({ type: "chats.updated", agentId, repoId: sync.repoId });
+}
+
+function tombstoneDeletedChat(chat: ChatRow, jobRows: Array<{ id: string; codex_thread_id?: string | null }>): void {
+  const stamp = nowIso();
+  const insert = db.prepare(`
+    INSERT OR IGNORE INTO deleted_chat_sync (agent_id, repo_id, source, external_id, deleted_at)
+    VALUES (?,?,?,?,?)
+  `);
+  if (chat.external_id) insert.run(chat.agent_id, chat.repo_id, chat.source, chat.external_id, stamp);
+  for (const job of jobRows) {
+    if (job.codex_thread_id) insert.run(chat.agent_id, chat.repo_id, "codex", job.codex_thread_id, stamp);
+  }
 }
 
 function dispatchQueue(agentId: string): void {
@@ -516,6 +531,7 @@ async function createApp(): Promise<FastifyInstance> {
         db.prepare("DELETE FROM jobs WHERE agent_id = ? AND repo_id = ?").run(params.agentId, params.repoId);
         for (const chat of chatRows) db.prepare("DELETE FROM chat_messages WHERE chat_id = ?").run(chat.id);
         db.prepare("DELETE FROM chats WHERE agent_id = ? AND repo_id = ?").run(params.agentId, params.repoId);
+        db.prepare("DELETE FROM deleted_chat_sync WHERE agent_id = ? AND repo_id = ?").run(params.agentId, params.repoId);
         db.prepare("DELETE FROM repos WHERE agent_id = ? AND id = ?").run(params.agentId, params.repoId);
         db.exec("COMMIT");
       } catch (error) {
@@ -627,9 +643,10 @@ async function createApp(): Promise<FastifyInstance> {
     const active = db.prepare("SELECT id FROM jobs WHERE chat_id = ? AND status IN ('queued','assigned','running') LIMIT 1")
       .get(chatId) as { id: string } | undefined;
     if (active) return reply.code(409).send({ error: "chat_has_running_job" });
-    const jobRows = db.prepare("SELECT id FROM jobs WHERE chat_id = ?").all(chatId) as Array<{ id: string }>;
+    const jobRows = db.prepare("SELECT id, codex_thread_id FROM jobs WHERE chat_id = ?").all(chatId) as Array<{ id: string; codex_thread_id: string | null }>;
     db.exec("BEGIN");
     try {
+      tombstoneDeletedChat(chat, jobRows);
       for (const job of jobRows) db.prepare("DELETE FROM job_logs WHERE job_id = ?").run(job.id);
       db.prepare("DELETE FROM jobs WHERE chat_id = ?").run(chatId);
       db.prepare("DELETE FROM chat_messages WHERE chat_id = ?").run(chatId);
