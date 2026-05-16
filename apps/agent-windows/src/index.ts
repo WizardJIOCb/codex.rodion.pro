@@ -174,8 +174,8 @@ function shellQuote(value: string): string {
 }
 
 async function toolVersion(command: string, args = ["--version"]): Promise<string | undefined> {
-  const executable = command === "codex" ? process.env.CMC_CODEX_BIN || command : command;
-  const result = await runCapture(executable, args, undefined, 15000);
+  const executable = command === "codex" ? codexExecutable() : { command, args: [] };
+  const result = await runCapture(executable.command, [...executable.args, ...args], undefined, 15000);
   return (result.stdout || result.stderr).trim().split(/\r?\n/)[0];
 }
 
@@ -185,7 +185,8 @@ async function probeCodexUsage(force = false): Promise<CodexUsage> {
 
   const checkedAt = new Date().toISOString();
   try {
-    const result = await runCapture(process.env.CMC_CODEX_BIN || "codex", ["login", "status"], undefined, 15000);
+    const executable = codexExecutable();
+    const result = await runCapture(executable.command, [...executable.args, "login", "status"], undefined, 15000);
     const rawStatus = (result.stdout || result.stderr).trim();
     const signedIn = result.exitCode === 0 && /logged in/i.test(rawStatus);
     cachedCodexUsage = {
@@ -206,6 +207,13 @@ async function probeCodexUsage(force = false): Promise<CodexUsage> {
   }
   cachedCodexUsageAt = Date.now();
   return cachedCodexUsage;
+}
+
+function codexExecutable(): { command: string; args: string[] } {
+  if (process.env.CMC_CODEX_NODE && process.env.CMC_CODEX_JS) {
+    return { command: process.env.CMC_CODEX_NODE, args: [process.env.CMC_CODEX_JS] };
+  }
+  return { command: process.env.CMC_CODEX_BIN || "codex", args: [] };
 }
 
 function optionalText(value: string | undefined): string | undefined {

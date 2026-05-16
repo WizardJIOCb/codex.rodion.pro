@@ -25,10 +25,12 @@ if (-not $env:CMC_CODEX_BIN) {
   $CodexCmd = Get-Command codex.cmd -ErrorAction SilentlyContinue
   if ($CodexCmd) {
     $env:CMC_CODEX_BIN = $CodexCmd.Source
+    $env:CMC_CODEX_JS = Join-Path (Split-Path -Parent $CodexCmd.Source) "node_modules\@openai\codex\bin\codex.js"
+    $env:CMC_CODEX_NODE = (Get-Command node.exe -ErrorAction Stop).Source
   }
 }
 
-if (-not $env:CMC_CODEX_BIN) {
+if (-not $env:CMC_CODEX_BIN -and -not ($env:CMC_CODEX_NODE -and $env:CMC_CODEX_JS)) {
   throw "codex.cmd is not available in PATH. Install or expose Codex CLI for the Windows agent."
 }
 

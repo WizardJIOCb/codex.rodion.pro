@@ -72,8 +72,9 @@ export class Runner {
   }
 
   private async runCodex(context: RunContext, repo: RepoConfig): Promise<AgentJobDone> {
-    const command = process.env.CMC_CODEX_BIN || "codex";
+    const codexCommand = codexExecutable();
     const args = [
+      ...codexCommand.prefixArgs,
       "exec",
       "-C",
       repo.path,
@@ -82,12 +83,12 @@ export class Runner {
       "--json",
       "-c",
       "approval_policy=\"never\"",
-      context.job.prompt
+      "-"
     ];
-    return this.spawnAndCollect(context, repo, command, args, context.config.maxJobDurationMs);
+    return this.spawnAndCollect(context, repo, codexCommand.command, args, context.config.maxJobDurationMs, context.job.prompt);
   }
 
-  private spawnAndCollect(context: RunContext, repo: RepoConfig, command: string, args: string[], timeoutMs: number): Promise<AgentJobDone> {
+  private spawnAndCollect(context: RunContext, repo: RepoConfig, command: string, args: string[], timeoutMs: number, stdinInput?: string): Promise<AgentJobDone> {
     return new Promise((resolve) => {
       context.sendLog(log(context.job.id, "system", `Starting ${command} ${args.slice(0, 4).join(" ")} ...`));
       context.sendProgress(progress(context.job.id, "starting", `Starting ${command}.`));
@@ -97,7 +98,7 @@ export class Runner {
         windowsHide: true,
         env: minimalEnv()
       });
-      this.child.stdin.end();
+      this.child.stdin.end(stdinInput);
       let finalMessage = "";
       let rawOutputTail = "";
       let codexThreadId: string | undefined;
@@ -171,6 +172,13 @@ export class Runner {
       });
     });
   }
+}
+
+function codexExecutable(): { command: string; prefixArgs: string[] } {
+  if (process.env.CMC_CODEX_NODE && process.env.CMC_CODEX_JS) {
+    return { command: process.env.CMC_CODEX_NODE, prefixArgs: [process.env.CMC_CODEX_JS] };
+  }
+  return { command: process.env.CMC_CODEX_BIN || "codex", prefixArgs: [] };
 }
 
 function log(jobId: string, stream: "stdout" | "stderr" | "system", message: string): AgentJobLog {
