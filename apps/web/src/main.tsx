@@ -15,6 +15,7 @@ import {
   Save,
   Settings,
   Square,
+  Trash2,
   UploadCloud,
   Wifi,
   WifiOff
@@ -453,6 +454,30 @@ function App() {
     await loadChat(targetChatId, jobId);
   }
 
+  async function deleteChat(chat: Chat) {
+    if (!csrf || !selectedRepo) return;
+    const activeInChat = activeJob?.chatId === chat.id && ["queued", "assigned", "running"].includes(activeJob.status);
+    if (activeInChat) return;
+    setBusy(true);
+    const response = await api(`/api/chats/${chat.id}`, {
+      method: "DELETE",
+      headers: { "x-csrf-token": csrf }
+    });
+    setBusy(false);
+    if (!response.ok) return;
+    const nextChats = chats.filter((item) => item.id !== chat.id);
+    setChats(nextChats);
+    if (activeChatId === chat.id) {
+      setActiveChatId("");
+      setJobs([]);
+      setMessages([]);
+      setActiveJob(null);
+      setLogs([]);
+      if (nextChats[0]) await loadChat(nextChats[0].id);
+    }
+    await loadChats(selectedRepo);
+  }
+
   async function cancelJob() {
     if (!activeJob || !csrf) return;
     await api(`/api/jobs/${activeJob.id}/cancel`, {
@@ -553,10 +578,15 @@ function App() {
                           <button disabled={busy || !chatTitle.trim()}><Plus size={14} /></button>
                         </form>
                         {chats.map((chat) => (
-                          <button className={activeChatId === chat.id ? "nav-leaf chat-child active" : "nav-leaf chat-child"} key={chat.id} onClick={() => loadChat(chat.id)}>
-                            <span>{chat.title}</span>
-                            <small>{new Date(chat.updatedAt).toLocaleString()}</small>
-                          </button>
+                          <div className={activeChatId === chat.id ? "nav-chat-row active" : "nav-chat-row"} key={chat.id}>
+                            <button className="nav-leaf chat-child" onClick={() => loadChat(chat.id)}>
+                              <span>{chat.title}</span>
+                              <small>{new Date(chat.updatedAt).toLocaleString()}</small>
+                            </button>
+                            <button className="nav-delete" disabled={busy || (activeJob?.chatId === chat.id && ["queued", "assigned", "running"].includes(activeJob.status))} onClick={() => deleteChat(chat)} title="Delete chat">
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
                         ))}
                         {!chats.length && <span className="nav-empty inset">No chats</span>}
                       </div>

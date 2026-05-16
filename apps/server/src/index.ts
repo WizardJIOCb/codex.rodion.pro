@@ -579,6 +579,30 @@ async function createApp(): Promise<FastifyInstance> {
     return { chat: serializeChat(chat), jobs: rows.map(serializeJob), messages: messages.map(serializeMessage) };
   });
 
+  app.delete("/api/chats/:id", async (request, reply) => {
+    if (!requireCsrf(db, request, reply)) return;
+    const chatId = (request.params as { id: string }).id;
+    const chat = db.prepare("SELECT * FROM chats WHERE id = ?").get(chatId) as ChatRow | undefined;
+    if (!chat) return reply.code(404).send({ error: "not_found" });
+    const active = db.prepare("SELECT id FROM jobs WHERE chat_id = ? AND status IN ('queued','assigned','running') LIMIT 1")
+      .get(chatId) as { id: string } | undefined;
+    if (active) return reply.code(409).send({ error: "chat_has_running_job" });
+    const jobRows = db.prepare("SELECT id FROM jobs WHERE chat_id = ?").all(chatId) as Array<{ id: string }>;
+    db.exec("BEGIN");
+    try {
+      for (const job of jobRows) db.prepare("DELETE FROM job_logs WHERE job_id = ?").run(job.id);
+      db.prepare("DELETE FROM jobs WHERE chat_id = ?").run(chatId);
+      db.prepare("DELETE FROM chat_messages WHERE chat_id = ?").run(chatId);
+      db.prepare("DELETE FROM chats WHERE id = ?").run(chatId);
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+    broadcast({ type: "chats.updated", agentId: chat.agent_id, repoId: chat.repo_id });
+    return { ok: true };
+  });
+
   app.get("/api/jobs", async (request, reply) => {
     if (!requireAuth(db, request, reply)) return;
     const query = request.query as { chatId?: string };

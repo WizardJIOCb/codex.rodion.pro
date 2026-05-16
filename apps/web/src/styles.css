@@ -257,10 +257,36 @@ textarea:focus {
 }
 
 .nav-leaf:hover,
-.nav-leaf.active {
+.nav-leaf.active,
+.nav-chat-row.active .nav-leaf {
   color: var(--text);
   background: rgba(86, 197, 150, 0.08);
   border-color: rgba(86, 197, 150, 0.24);
+}
+
+.nav-chat-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px;
+  gap: 4px;
+  min-width: 0;
+}
+
+.nav-delete {
+  width: 28px;
+  min-height: 28px;
+  display: grid;
+  place-items: center;
+  align-self: stretch;
+  border-radius: 6px;
+  color: var(--soft);
+  background: transparent;
+  border: 1px solid transparent;
+}
+
+.nav-delete:hover {
+  color: var(--danger);
+  border-color: rgba(248, 113, 113, 0.3);
+  background: rgba(248, 113, 113, 0.08);
 }
 
 .nav-leaf.project {
