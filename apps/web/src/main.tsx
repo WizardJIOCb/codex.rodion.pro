@@ -392,6 +392,8 @@ function App() {
   const [gitBusy, setGitBusy] = useState(false);
   const [deployNotice, setDeployNotice] = useState("");
   const [deployBusy, setDeployBusy] = useState(false);
+  const [nginxNotice, setNginxNotice] = useState("");
+  const [nginxBusy, setNginxBusy] = useState(false);
   const [chatNotice, setChatNotice] = useState("");
   const [projectNotice, setProjectNotice] = useState("");
 
@@ -478,6 +480,7 @@ function App() {
     setGitRemoteUrl(repo.githubUrl ?? "");
     setGitNotice("");
     setDeployNotice("");
+    setNginxNotice("");
     setActiveChatId("");
     setJobs([]);
     setMessages([]);
@@ -498,6 +501,7 @@ function App() {
     setProjectPanel(null);
     setGitNotice("");
     setDeployNotice("");
+    setNginxNotice("");
   }
 
   function openNewProject() {
@@ -775,6 +779,25 @@ function App() {
     await refresh();
   }
 
+  async function configureNginx() {
+    if (!selectedRepo || !csrf) return;
+    setNginxBusy(true);
+    setNginxNotice("Nginx setup started...");
+    const response = await api(`/api/projects/${selectedRepo.agentId}/${selectedRepo.id}/nginx`, {
+      method: "POST",
+      headers: { "x-csrf-token": csrf },
+      body: "{}"
+    });
+    const data = await response.json().catch(() => ({}));
+    setNginxBusy(false);
+    if (!response.ok) {
+      setNginxNotice(data.output || data.error || "Nginx setup failed.");
+      return;
+    }
+    setNginxNotice(data.output || "Nginx configured.");
+    await refresh();
+  }
+
   async function logout() {
     if (csrf) await api("/api/logout", { method: "POST", headers: { "x-csrf-token": csrf }, body: "{}" });
     setCsrf(undefined);
@@ -995,8 +1018,10 @@ function App() {
               <input aria-label="Remote URL" placeholder="origin URL, optional" value={gitRemoteUrl} onChange={(event) => setGitRemoteUrl(event.target.value)} />
               <button disabled={gitBusy || !gitMessage.trim()} type="submit"><UploadCloud size={16} /> Commit & push</button>
               <button disabled={deployBusy || !selectedRepo.serverPath || !selectedRepo.deploy?.sshTarget} type="button" onClick={deployProject}><UploadCloud size={16} /> Deploy</button>
+              <button disabled={nginxBusy || !selectedRepo.serverPath || !selectedRepo.domain || !selectedRepo.deploy?.sshTarget} type="button" onClick={configureNginx}><Settings size={16} /> Nginx</button>
               {gitNotice && <pre>{gitNotice}</pre>}
               {deployNotice && <pre>{deployNotice}</pre>}
+              {nginxNotice && <pre>{nginxNotice}</pre>}
             </form>
             {activeChat ? (
               <>

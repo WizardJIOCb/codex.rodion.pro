@@ -135,6 +135,15 @@ export const AgentDeployResultSchema = z.object({
   repos: z.array(RepoInfoSchema).optional()
 });
 
+export const AgentNginxResultSchema = z.object({
+  type: z.literal("nginx.result"),
+  requestId: z.string().min(1),
+  ok: z.boolean(),
+  error: z.string().optional(),
+  output: z.string().optional(),
+  repos: z.array(RepoInfoSchema).optional()
+});
+
 export const ChatMessageSchema = z.object({
   id: z.string().optional(),
   role: z.enum(["user", "assistant", "system", "tool"]),
@@ -166,6 +175,7 @@ export const AgentToServerSchema = z.discriminatedUnion("type", [
   AgentProjectResultSchema,
   AgentGitResultSchema,
   AgentDeployResultSchema,
+  AgentNginxResultSchema,
   AgentChatSyncSchema
 ]);
 export type AgentToServer = z.infer<typeof AgentToServerSchema>;
@@ -241,6 +251,12 @@ export const ServerDeploySchema = z.object({
   repoId: z.string().min(1)
 });
 
+export const ServerNginxSchema = z.object({
+  type: z.literal("project.nginx"),
+  requestId: z.string().min(1),
+  repoId: z.string().min(1)
+});
+
 export const ServerToAgentSchema = z.discriminatedUnion("type", [
   ServerJobRunSchema,
   ServerJobCancelSchema,
@@ -249,6 +265,7 @@ export const ServerToAgentSchema = z.discriminatedUnion("type", [
   ServerProjectDeleteSchema,
   ServerGitSyncSchema,
   ServerDeploySchema,
+  ServerNginxSchema,
   z.object({ type: z.literal("repo.scan") })
 ]);
 export type ServerToAgent = z.infer<typeof ServerToAgentSchema>;
@@ -302,6 +319,9 @@ export type GitSync = z.infer<typeof GitSyncSchema>;
 
 export const DeploySchema = z.object({});
 export type Deploy = z.infer<typeof DeploySchema>;
+
+export const NginxSchema = z.object({});
+export type Nginx = z.infer<typeof NginxSchema>;
 
 export const UiEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("agent.status"), agentId: z.string(), status: z.enum(["online", "offline"]) }),
