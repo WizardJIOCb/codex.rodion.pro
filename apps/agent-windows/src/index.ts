@@ -174,7 +174,8 @@ function shellQuote(value: string): string {
 }
 
 async function toolVersion(command: string, args = ["--version"]): Promise<string | undefined> {
-  const result = await runCapture(command, args, undefined, 15000);
+  const executable = command === "codex" ? process.env.CMC_CODEX_BIN || command : command;
+  const result = await runCapture(executable, args, undefined, 15000);
   return (result.stdout || result.stderr).trim().split(/\r?\n/)[0];
 }
 
@@ -184,7 +185,7 @@ async function probeCodexUsage(force = false): Promise<CodexUsage> {
 
   const checkedAt = new Date().toISOString();
   try {
-    const result = await runCapture("codex", ["login", "status"], undefined, 15000);
+    const result = await runCapture(process.env.CMC_CODEX_BIN || "codex", ["login", "status"], undefined, 15000);
     const rawStatus = (result.stdout || result.stderr).trim();
     const signedIn = result.exitCode === 0 && /logged in/i.test(rawStatus);
     cachedCodexUsage = {

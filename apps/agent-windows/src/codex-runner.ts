@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type { AgentJobDone, AgentJobLog, AgentJobProgress } from "./types.js";
 import type { AgentConfig, RepoConfig } from "./config.js";
-import { minimalEnv, runCapture } from "./process-utils.js";
+import { minimalEnv, needsShell, runCapture } from "./process-utils.js";
 
 type RunContext = {
   config: AgentConfig;
@@ -72,6 +72,7 @@ export class Runner {
   }
 
   private async runCodex(context: RunContext, repo: RepoConfig): Promise<AgentJobDone> {
+    const command = process.env.CMC_CODEX_BIN || "codex";
     const args = [
       "exec",
       "-C",
@@ -83,7 +84,7 @@ export class Runner {
       "approval_policy=\"never\"",
       context.job.prompt
     ];
-    return this.spawnAndCollect(context, repo, "codex", args, context.config.maxJobDurationMs);
+    return this.spawnAndCollect(context, repo, command, args, context.config.maxJobDurationMs);
   }
 
   private spawnAndCollect(context: RunContext, repo: RepoConfig, command: string, args: string[], timeoutMs: number): Promise<AgentJobDone> {
@@ -92,7 +93,7 @@ export class Runner {
       context.sendProgress(progress(context.job.id, "starting", `Starting ${command}.`));
       this.child = spawn(command, args, {
         cwd: repo.path,
-        shell: false,
+        shell: needsShell(command),
         windowsHide: true,
         env: minimalEnv()
       });

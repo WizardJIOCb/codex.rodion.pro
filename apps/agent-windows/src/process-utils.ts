@@ -10,7 +10,7 @@ export function runCapture(command: string, args: string[], cwd?: string, timeou
   return new Promise((resolve) => {
     const child = spawn(command, args, {
       cwd,
-      shell: false,
+      shell: needsShell(command),
       windowsHide: true,
       env: minimalEnv()
     });
@@ -32,6 +32,10 @@ export function runCapture(command: string, args: string[], cwd?: string, timeou
       resolve({ exitCode, stdout, stderr });
     });
   });
+}
+
+export function needsShell(command: string): boolean {
+  return process.platform === "win32" && /\.(cmd|bat)$/i.test(command);
 }
 
 export function minimalEnv(): NodeJS.ProcessEnv {
