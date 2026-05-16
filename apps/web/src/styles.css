@@ -125,7 +125,7 @@ textarea:focus {
 .app-frame {
   min-height: 100vh;
   display: grid;
-  grid-template-columns: 248px minmax(0, 1fr) 330px;
+  grid-template-columns: 340px minmax(0, 1fr) 330px;
   gap: 10px;
   padding: 10px;
 }
@@ -1091,7 +1091,7 @@ button:disabled {
 
 @media (max-width: 1180px) {
   .app-frame {
-    grid-template-columns: minmax(232px, 270px) minmax(0, 1fr);
+    grid-template-columns: minmax(300px, 340px) minmax(0, 1fr);
   }
 
   .app-nav {
