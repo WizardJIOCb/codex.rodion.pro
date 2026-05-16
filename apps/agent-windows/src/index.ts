@@ -95,6 +95,23 @@ async function sendNginxResult(
   });
 }
 
+async function sendSslResult(
+  send: (message: AgentToServer) => void,
+  requestId: string,
+  ok: boolean,
+  output: string,
+  error?: string
+) {
+  send({
+    type: "ssl.result",
+    requestId,
+    ok,
+    output: redact(output),
+    error: error ? redact(error) : undefined,
+    repos: ok ? await scanRepos(config) : undefined
+  });
+}
+
 async function gitStatusLineFromOutput(output: string): Promise<string> {
   const lastLine = output.trim().split(/\r?\n/).filter(Boolean).at(-1);
   return lastLine ?? "Git sync completed.";
@@ -230,6 +247,34 @@ async function configureNginx(repoId: string): Promise<string> {
   if (text) output.push(text);
   if (result.exitCode !== 0) throw new Error([...output, `Nginx configure failed with exit code ${result.exitCode}`].join("\n"));
   return [...output, `Nginx configured: http://${repo.domain}`].join("\n");
+}
+
+async function configureSsl(repoId: string): Promise<string> {
+  const repo = config.repos.find((item) => item.id === repoId);
+  if (!repo) throw new Error("Project not found in agent config.");
+  if (!repo.domain) throw new Error("Project domain is not configured.");
+  if (!repo.deploy?.sshTarget) throw new Error("Project deploy SSH target is not configured.");
+  if (!isSafeDomain(repo.domain)) throw new Error("Project domain is not safe for certbot config.");
+
+  const output: string[] = [];
+  output.push(await configureNginx(repoId));
+  const certbotCommand = [
+    "sudo certbot --nginx",
+    `-d ${shellQuote(repo.domain)}`,
+    "--non-interactive",
+    "--agree-tos",
+    "--redirect",
+    "--keep-until-expiring",
+    "--register-unsafely-without-email",
+    "&& sudo nginx -t",
+    "&& sudo systemctl reload nginx"
+  ].join(" ");
+  const result = await runCapture("ssh", [repo.deploy.sshTarget, certbotCommand], repo.path, 300000);
+  output.push(`$ ssh ${repo.deploy.sshTarget} certbot ${repo.domain}`);
+  const text = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join("\n");
+  if (text) output.push(text);
+  if (result.exitCode !== 0) throw new Error([...output, `SSL configure failed with exit code ${result.exitCode}`].join("\n"));
+  return [...output, `SSL configured: https://${repo.domain}`].join("\n");
 }
 
 function isSafeDomain(value: string): boolean {
@@ -441,6 +486,16 @@ function connect() {
         await sendNginxResult(send, message.requestId, true, output);
       } catch (error) {
         await sendNginxResult(send, message.requestId, false, "", error instanceof Error ? error.message : String(error));
+      }
+      return;
+    }
+
+    if (message.type === "project.ssl") {
+      try {
+        const output = await configureSsl(message.repoId);
+        await sendSslResult(send, message.requestId, true, output);
+      } catch (error) {
+        await sendSslResult(send, message.requestId, false, "", error instanceof Error ? error.message : String(error));
       }
       return;
     }

@@ -394,6 +394,8 @@ function App() {
   const [deployBusy, setDeployBusy] = useState(false);
   const [nginxNotice, setNginxNotice] = useState("");
   const [nginxBusy, setNginxBusy] = useState(false);
+  const [sslNotice, setSslNotice] = useState("");
+  const [sslBusy, setSslBusy] = useState(false);
   const [chatNotice, setChatNotice] = useState("");
   const [projectNotice, setProjectNotice] = useState("");
 
@@ -481,6 +483,7 @@ function App() {
     setGitNotice("");
     setDeployNotice("");
     setNginxNotice("");
+    setSslNotice("");
     setActiveChatId("");
     setJobs([]);
     setMessages([]);
@@ -502,6 +505,7 @@ function App() {
     setGitNotice("");
     setDeployNotice("");
     setNginxNotice("");
+    setSslNotice("");
   }
 
   function openNewProject() {
@@ -798,6 +802,25 @@ function App() {
     await refresh();
   }
 
+  async function configureSsl() {
+    if (!selectedRepo || !csrf) return;
+    setSslBusy(true);
+    setSslNotice("SSL setup started...");
+    const response = await api(`/api/projects/${selectedRepo.agentId}/${selectedRepo.id}/ssl`, {
+      method: "POST",
+      headers: { "x-csrf-token": csrf },
+      body: "{}"
+    });
+    const data = await response.json().catch(() => ({}));
+    setSslBusy(false);
+    if (!response.ok) {
+      setSslNotice(data.output || data.error || "SSL setup failed.");
+      return;
+    }
+    setSslNotice(data.output || "SSL configured.");
+    await refresh();
+  }
+
   async function logout() {
     if (csrf) await api("/api/logout", { method: "POST", headers: { "x-csrf-token": csrf }, body: "{}" });
     setCsrf(undefined);
@@ -1019,9 +1042,11 @@ function App() {
               <button disabled={gitBusy || !gitMessage.trim()} type="submit"><UploadCloud size={16} /> Commit & push</button>
               <button disabled={deployBusy || !selectedRepo.serverPath || !selectedRepo.deploy?.sshTarget} type="button" onClick={deployProject}><UploadCloud size={16} /> Deploy</button>
               <button disabled={nginxBusy || !selectedRepo.serverPath || !selectedRepo.domain || !selectedRepo.deploy?.sshTarget} type="button" onClick={configureNginx}><Settings size={16} /> Nginx</button>
+              <button disabled={sslBusy || !selectedRepo.serverPath || !selectedRepo.domain || !selectedRepo.deploy?.sshTarget} type="button" onClick={configureSsl}><Settings size={16} /> SSL</button>
               {gitNotice && <pre>{gitNotice}</pre>}
               {deployNotice && <pre>{deployNotice}</pre>}
               {nginxNotice && <pre>{nginxNotice}</pre>}
+              {sslNotice && <pre>{sslNotice}</pre>}
             </form>
             {activeChat ? (
               <>
