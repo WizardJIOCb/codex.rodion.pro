@@ -159,6 +159,166 @@ function diffRows(stat: string | null) {
     .slice(0, 8);
 }
 
+function normalizeDisplayText(value: string) {
+  return value
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/\\r\\n/g, "\n")
+    .replace(/\\n/g, "\n")
+    .replace(/\\r/g, "\n")
+    .replace(/\\t/g, "  ");
+}
+
+function renderInlineMarkdown(text: string) {
+  const nodes: React.ReactNode[] = [];
+  const pattern = /(`[^`]+`|\[[^\]]+\]\([^)]+\))/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(text))) {
+    if (match.index > lastIndex) nodes.push(text.slice(lastIndex, match.index));
+    const token = match[0];
+    if (token.startsWith("`")) {
+      nodes.push(<code key={nodes.length}>{token.slice(1, -1)}</code>);
+    } else {
+      const link = token.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
+      nodes.push(<code key={nodes.length}>{link ? `${link[1]} ${link[2]}` : token}</code>);
+    }
+    lastIndex = match.index + token.length;
+  }
+
+  if (lastIndex < text.length) nodes.push(text.slice(lastIndex));
+  return nodes;
+}
+
+function renderRichText(value: string, className = "rich-text") {
+  const lines = normalizeDisplayText(value).trim().split("\n");
+  const blocks: React.ReactNode[] = [];
+  let index = 0;
+
+  while (index < lines.length) {
+    const line = lines[index] ?? "";
+    if (!line.trim()) {
+      index += 1;
+      continue;
+    }
+
+    const fence = line.match(/^```\s*([\w-]+)?\s*$/);
+    if (fence) {
+      const code: string[] = [];
+      index += 1;
+      while (index < lines.length && !/^```\s*$/.test(lines[index] ?? "")) {
+        code.push(lines[index] ?? "");
+        index += 1;
+      }
+      if (index < lines.length) index += 1;
+      blocks.push(
+        <pre className="rich-code" key={blocks.length}>
+          <code>{code.join("\n")}</code>
+        </pre>
+      );
+      continue;
+    }
+
+    const heading = line.match(/^(#{1,3})\s+(.+)$/);
+    if (heading?.[2]) {
+      blocks.push(<h3 key={blocks.length}>{renderInlineMarkdown(heading[2])}</h3>);
+      index += 1;
+      continue;
+    }
+
+    const bullet = line.match(/^\s*[-*]\s+(.+)$/);
+    const numbered = line.match(/^\s*\d+[.)]\s+(.+)$/);
+    if (bullet || numbered) {
+      const ordered = Boolean(numbered);
+      const items: string[] = [];
+      while (index < lines.length) {
+        const itemLine = lines[index] ?? "";
+        const item = ordered ? itemLine.match(/^\s*\d+[.)]\s+(.+)$/) : itemLine.match(/^\s*[-*]\s+(.+)$/);
+        if (!item) break;
+        items.push(item[1] ?? "");
+        index += 1;
+      }
+      const children = items.map((item, itemIndex) => <li key={itemIndex}>{renderInlineMarkdown(item)}</li>);
+      blocks.push(ordered ? <ol key={blocks.length}>{children}</ol> : <ul key={blocks.length}>{children}</ul>);
+      continue;
+    }
+
+    const paragraph: string[] = [line];
+    index += 1;
+    while (
+      index < lines.length &&
+      (lines[index] ?? "").trim() &&
+      !/^```\s*[\w-]*\s*$/.test(lines[index] ?? "") &&
+      !/^(#{1,3})\s+/.test(lines[index] ?? "") &&
+      !/^\s*[-*]\s+/.test(lines[index] ?? "") &&
+      !/^\s*\d+[.)]\s+/.test(lines[index] ?? "")
+    ) {
+      paragraph.push(lines[index] ?? "");
+      index += 1;
+    }
+    blocks.push(<p key={blocks.length}>{renderInlineMarkdown(paragraph.join(" "))}</p>);
+  }
+
+  return <div className={className}>{blocks.length ? blocks : <p>{value}</p>}</div>;
+}
+
+function summarizeDisplayCommand(command: string) {
+  return command
+    .replace(/"C:\\Windows\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe"\s+-Command\s+/i, "")
+    .replace(/^powershell(?:\.exe)?\s+-Command\s+/i, "")
+    .replace(/\s+/g, " ")
+    .slice(0, 180);
+}
+
+function displayLogMessage(log: Log) {
+  const rawText = log.message.trim();
+  if (!rawText) return null;
+  try {
+    const event = JSON.parse(rawText) as Record<string, unknown>;
+    const item = event.item && typeof event.item === "object" ? event.item as Record<string, unknown> : undefined;
+    const type = typeof event.type === "string" ? event.type : "";
+    if (type === "thread.started") return "Codex thread started.";
+    if (type === "turn.started") return "Codex is thinking.";
+    if (type === "item.started" && item?.type === "command_execution") {
+      return `Running: ${summarizeDisplayCommand(String(item.command ?? "command"))}`;
+    }
+    if (type === "item.completed" && item?.type === "agent_message" && typeof item.text === "string") {
+      return normalizeDisplayText(item.text).trim();
+    }
+    if (type === "item.completed" && item?.type === "command_execution") {
+      const command = summarizeDisplayCommand(String(item.command ?? "command"));
+      const status = String(item.status ?? "completed");
+      const output = typeof item.aggregated_output === "string" ? normalizeDisplayText(item.aggregated_output).trim() : "";
+      return [output ? `${command}: ${status}.` : `${command}: ${status}.`, output].filter(Boolean).join("\n\n");
+    }
+    return type ? `Codex event: ${type}` : null;
+  } catch {
+    return normalizeDisplayText(rawText).trim();
+  }
+}
+
+function renderLogs(logs: Log[]) {
+  const visibleLogs = logs
+    .map((line) => ({ ...line, display: displayLogMessage(line) }))
+    .filter((line): line is Log & { display: string } => Boolean(line.display));
+
+  if (!visibleLogs.length) return <div className="empty small-empty">Waiting for logs...</div>;
+  return (
+    <div className="logs-rich">
+      {visibleLogs.map((line, index) => (
+        <article className={`log-entry ${line.stream}`} key={line.id ?? `${line.at}:${index}`}>
+          <div className="log-meta">
+            <span>{line.stream}</span>
+            <small>{new Date(line.at).toLocaleTimeString()}</small>
+          </div>
+          {renderRichText(line.display, "rich-text compact")}
+        </article>
+      ))}
+    </div>
+  );
+}
+
 function App() {
   const [csrf, setCsrf] = useState<string>();
   const [email, setEmail] = useState("");
@@ -783,7 +943,7 @@ function App() {
                             <span>{message.role === "user" ? "You" : message.source === "vscode" ? "VS Code" : "Codex"}</span>
                             <small>{new Date(message.createdAt).toLocaleString()}</small>
                           </div>
-                          <p>{message.content}</p>
+                          {renderRichText(message.content, "rich-text message-body")}
                         </article>
                       )) : (
                         <div className="empty">Начни этот чат или дождись синхронизации истории из локального Codex/VS Code.</div>
@@ -823,7 +983,7 @@ function App() {
                             ))}
                           </div>
                         )}
-                        <pre className="logs">{logs.map((line) => `[${line.stream}] ${line.message}`).join("\n") || "Waiting for logs..."}</pre>
+                        {renderLogs(logs)}
                         <div className="results">
                           <h2>Git status</h2>
                           <pre>{activeJob.gitStatus || "No status yet."}</pre>

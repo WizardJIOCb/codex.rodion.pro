@@ -148,6 +148,7 @@ textarea:focus {
 .chat-thread,
 .edited-card,
 .logs,
+.logs-rich,
 .results pre,
 .empty,
 .git-panel {
@@ -707,11 +708,70 @@ h2 {
   font-weight: 800;
 }
 
-.message p {
-  margin: 0;
-  line-height: 1.45;
+.rich-text {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  line-height: 1.48;
   overflow-wrap: anywhere;
-  white-space: pre-wrap;
+}
+
+.rich-text.compact {
+  gap: 6px;
+}
+
+.rich-text p,
+.rich-text h3,
+.rich-text ul,
+.rich-text ol,
+.rich-text pre {
+  margin: 0;
+}
+
+.rich-text h3 {
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.rich-text ul,
+.rich-text ol {
+  display: grid;
+  gap: 4px;
+  padding-left: 20px;
+}
+
+.rich-text li {
+  padding-left: 2px;
+}
+
+.rich-text code {
+  padding: 1px 5px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #f4f4f0;
+  color: #111827;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 0.92em;
+}
+
+.rich-code {
+  max-width: 100%;
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fbfbfa;
+}
+
+.rich-code code {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  white-space: pre;
+}
+
+.message .rich-text {
+  overflow-wrap: anywhere;
 }
 
 .edited-card {
@@ -820,6 +880,7 @@ pre {
 }
 
 .logs,
+.logs-rich,
 .results pre,
 .empty {
   width: 100%;
@@ -836,6 +897,45 @@ pre {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   font-size: 12px;
   background: #fbfbfa;
+}
+
+.logs-rich {
+  display: grid;
+  gap: 8px;
+  min-height: 220px;
+  max-height: 52vh;
+  overflow: auto;
+  padding: 10px;
+  background: #fbfbfa;
+}
+
+.log-entry {
+  display: grid;
+  gap: 7px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #ffffff;
+}
+
+.log-entry.stderr {
+  border-color: rgba(217, 45, 32, 0.28);
+  background: rgba(217, 45, 32, 0.05);
+}
+
+.log-entry.system {
+  background: #f8f8f5;
+}
+
+.log-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
 }
 
 .results pre {
