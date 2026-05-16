@@ -136,7 +136,8 @@ function defaultProjectPath(name: string) {
   const slug = name
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9а-яё]+/gi, "-")
+    .replace(/[^a-z0-9а-яё.]+/gi, "-")
+    .replace(/\.{2,}/g, ".")
     .replace(/^-+|-+$/g, "");
   return `C:\\Projects\\${slug || "new-project"}`;
 }
