@@ -52,6 +52,7 @@ type Agent = {
 type DeployConfig = {
   sshTarget: string;
   sourceDir: string;
+  remoteSubdir?: string;
   cleanRemote: boolean;
   buildCommand?: {
     command: string;
@@ -163,13 +164,14 @@ function formatBuildCommand(deploy?: DeployConfig) {
   return [deploy.buildCommand.command, ...deploy.buildCommand.args].join(" ");
 }
 
-function buildDeployConfig(sshTarget: string, sourceDir: string, cleanRemote: boolean, buildCommand: string): DeployConfig | undefined {
+function buildDeployConfig(sshTarget: string, sourceDir: string, remoteSubdir: string, cleanRemote: boolean, buildCommand: string): DeployConfig | undefined {
   const target = sshTarget.trim();
   if (!target) return undefined;
   const parts = splitCommandLine(buildCommand.trim());
   return {
     sshTarget: target,
     sourceDir: sourceDir.trim() || "dist",
+    remoteSubdir: remoteSubdir.trim() || undefined,
     cleanRemote,
     buildCommand: parts[0] ? {
       command: parts[0],
@@ -382,6 +384,7 @@ function App() {
   const [projectDomain, setProjectDomain] = useState("");
   const [projectDeploySshTarget, setProjectDeploySshTarget] = useState("");
   const [projectDeploySourceDir, setProjectDeploySourceDir] = useState("dist");
+  const [projectDeployRemoteSubdir, setProjectDeployRemoteSubdir] = useState("");
   const [projectDeployBuildCommand, setProjectDeployBuildCommand] = useState("npm.cmd run build");
   const [projectDeployCleanRemote, setProjectDeployCleanRemote] = useState(true);
   const [originalProjectPath, setOriginalProjectPath] = useState("");
@@ -530,6 +533,7 @@ function App() {
     setProjectDomain(repo.domain ?? "");
     setProjectDeploySshTarget(repo.deploy?.sshTarget ?? "");
     setProjectDeploySourceDir(repo.deploy?.sourceDir ?? "dist");
+    setProjectDeployRemoteSubdir(repo.deploy?.remoteSubdir ?? "");
     setProjectDeployBuildCommand(formatBuildCommand(repo.deploy));
     setProjectDeployCleanRemote(repo.deploy?.cleanRemote ?? true);
     setOriginalProjectPath(repo.pathMasked);
@@ -598,7 +602,7 @@ function App() {
       githubUrl: projectGithubUrl.trim(),
       serverPath: projectServerPath.trim(),
       domain: projectDomain.trim(),
-      deploy: buildDeployConfig(projectDeploySshTarget, projectDeploySourceDir, projectDeployCleanRemote, projectDeployBuildCommand) ?? null,
+      deploy: buildDeployConfig(projectDeploySshTarget, projectDeploySourceDir, projectDeployRemoteSubdir, projectDeployCleanRemote, projectDeployBuildCommand) ?? null,
       defaultSandbox: sandbox,
       allowedSandboxes: SANDBOXES
     };
@@ -1001,6 +1005,10 @@ function App() {
           <label>
             Deploy source folder
             <input placeholder="dist" value={projectDeploySourceDir} onChange={(event) => setProjectDeploySourceDir(event.target.value)} />
+          </label>
+          <label>
+            Deploy target subfolder
+            <input placeholder="dist, optional" value={projectDeployRemoteSubdir} onChange={(event) => setProjectDeployRemoteSubdir(event.target.value)} />
           </label>
           <label>
             Build command

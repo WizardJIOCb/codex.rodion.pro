@@ -187,15 +187,17 @@ async function deployProject(repoId: string): Promise<string> {
   const sourceDir = resolveProjectPath(repo.path, repo.deploy.sourceDir);
   const sourceForScp = `${sourceDir.replace(/\\/g, "/")}/.`;
   const remotePath = repo.serverPath.replace(/\/+$/g, "");
-  const quotedRemotePath = shellQuote(remotePath);
+  const remoteSubdir = normalizeRemoteSubdir(repo.deploy.remoteSubdir);
+  const deployPath = remoteSubdir ? `${remotePath}/${remoteSubdir}` : remotePath;
+  const quotedDeployPath = shellQuote(deployPath);
   const cleanCommand = repo.deploy.cleanRemote
-    ? `mkdir -p ${quotedRemotePath} && find ${quotedRemotePath} -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +`
-    : `mkdir -p ${quotedRemotePath}`;
+    ? `mkdir -p ${quotedDeployPath} && find ${quotedDeployPath} -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +`
+    : `mkdir -p ${quotedDeployPath}`;
 
-  await runStep(`ssh ${repo.deploy.sshTarget} prepare ${remotePath}`, "ssh", [repo.deploy.sshTarget, cleanCommand], repo.path, 60000);
-  await runStep(`scp ${sourceForScp} ${repo.deploy.sshTarget}:${remotePath}/`, "scp", ["-r", sourceForScp, `${repo.deploy.sshTarget}:${remotePath}/`], repo.path, 180000);
-  await runStep(`ssh ${repo.deploy.sshTarget} permissions ${remotePath}`, "ssh", [repo.deploy.sshTarget, `chown -R www-data:www-data ${quotedRemotePath} 2>/dev/null || true`], repo.path, 60000);
-  return [...output, `Deploy completed: ${repo.domain ? `https://${repo.domain}` : remotePath}`].join("\n");
+  await runStep(`ssh ${repo.deploy.sshTarget} prepare ${deployPath}`, "ssh", [repo.deploy.sshTarget, cleanCommand], repo.path, 60000);
+  await runStep(`scp ${sourceForScp} ${repo.deploy.sshTarget}:${deployPath}/`, "scp", ["-r", sourceForScp, `${repo.deploy.sshTarget}:${deployPath}/`], repo.path, 180000);
+  await runStep(`ssh ${repo.deploy.sshTarget} permissions ${deployPath}`, "ssh", [repo.deploy.sshTarget, `chown -R www-data:www-data ${quotedDeployPath} 2>/dev/null || true`], repo.path, 60000);
+  return [...output, `Deploy completed: ${repo.domain ? `https://${repo.domain}` : deployPath}`].join("\n");
 }
 
 async function configureNginx(repoId: string): Promise<string> {
@@ -314,6 +316,16 @@ function isSafeDomain(value: string): boolean {
 function resolveProjectPath(projectPath: string, childPath: string): string {
   if (/^[a-z]:[\\/]/i.test(childPath) || childPath.startsWith("\\\\")) return childPath;
   return `${projectPath.replace(/[\\/]+$/g, "")}\\${childPath.replace(/^[\\/]+/g, "")}`;
+}
+
+function normalizeRemoteSubdir(value?: string): string | undefined {
+  const normalized = value?.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+  if (!normalized) return undefined;
+  if (normalized.split("/").some((part) => !part || part === "." || part === "..")) {
+    throw new Error("Deploy remote subdir is not safe.");
+  }
+  if (!/^[A-Za-z0-9._/-]+$/.test(normalized)) throw new Error("Deploy remote subdir is not safe.");
+  return normalized;
 }
 
 function shellQuote(value: string): string {

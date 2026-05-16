@@ -13,6 +13,7 @@ const TestCommandSchema = z.object({
 const DeployConfigSchema = z.object({
   sshTarget: z.string().min(1),
   sourceDir: z.string().min(1).default("dist"),
+  remoteSubdir: z.string().max(120).optional(),
   cleanRemote: z.boolean().default(true),
   buildCommand: z.object({
     command: z.string().min(1),
