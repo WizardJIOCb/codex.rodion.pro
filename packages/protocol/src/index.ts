@@ -206,6 +206,12 @@ export const ServerProjectUpdateSchema = z.object({
   })
 });
 
+export const ServerProjectDeleteSchema = z.object({
+  type: z.literal("project.delete"),
+  requestId: z.string().min(1),
+  repoId: z.string().min(1)
+});
+
 export const ServerGitSyncSchema = z.object({
   type: z.literal("git.sync"),
   requestId: z.string().min(1),
@@ -225,6 +231,7 @@ export const ServerToAgentSchema = z.discriminatedUnion("type", [
   ServerJobCancelSchema,
   ServerProjectCreateSchema,
   ServerProjectUpdateSchema,
+  ServerProjectDeleteSchema,
   ServerGitSyncSchema,
   ServerDeploySchema,
   z.object({ type: z.literal("repo.scan") })

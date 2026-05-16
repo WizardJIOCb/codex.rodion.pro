@@ -569,6 +569,7 @@ textarea:focus {
 .secondary,
 .new-chat button,
 .project-form button[type="submit"],
+.danger-button,
 .git-panel button,
 .sticky-submit button,
 .login button {
@@ -597,6 +598,11 @@ textarea:focus {
 .login button {
   color: #ffffff;
   background: var(--accent);
+}
+
+.danger-button {
+  color: #ffffff;
+  background: var(--danger);
 }
 
 .sticky-submit {

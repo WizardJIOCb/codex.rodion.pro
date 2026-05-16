@@ -328,6 +328,19 @@ function connect() {
       return;
     }
 
+    if (message.type === "project.delete") {
+      try {
+        const index = config.repos.findIndex((item) => item.id === message.repoId);
+        if (index === -1) throw new Error("Project not found in agent config.");
+        config.repos.splice(index, 1);
+        saveAgentConfig(config);
+        await sendProjectResult(send, message.requestId, true);
+      } catch (error) {
+        await sendProjectResult(send, message.requestId, false, error instanceof Error ? error.message : String(error));
+      }
+      return;
+    }
+
     if (message.type === "git.sync") {
       try {
         const output = await gitSync(message.repoId, message.message, message.remoteUrl);

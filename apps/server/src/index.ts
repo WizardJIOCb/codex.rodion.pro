@@ -83,7 +83,7 @@ function sendAgent(agentId: string, message: ServerToAgent): boolean {
 
 function requestAgentProject(
   agentId: string,
-  message: Extract<ServerToAgent, { type: "project.create" | "project.update" }>
+  message: Extract<ServerToAgent, { type: "project.create" | "project.update" | "project.delete" }>
 ): Promise<Extract<AgentToServer, { type: "project.result" }>> {
   const agent = agents.get(agentId);
   if (!agent) return Promise.reject(new Error("agent_offline"));
@@ -484,6 +484,46 @@ async function createApp(): Promise<FastifyInstance> {
       });
       if (!result.ok) return reply.code(400).send({ error: result.error ?? "project_update_failed" });
       if (result.repos) upsertRepos(params.agentId, result.repos);
+      return { ok: true };
+    } catch (error) {
+      return reply.code(503).send({ error: error instanceof Error ? error.message : "agent_error" });
+    }
+  });
+
+  app.delete("/api/projects/:agentId/:repoId", async (request, reply) => {
+    if (!requireCsrf(db, request, reply)) return;
+    const params = request.params as { agentId: string; repoId: string };
+    const repo = db.prepare("SELECT * FROM repos WHERE agent_id = ? AND id = ?")
+      .get(params.agentId, params.repoId) as RepoRow | undefined;
+    if (!repo) return reply.code(404).send({ error: "repo_not_found" });
+    const active = db.prepare("SELECT id FROM jobs WHERE agent_id = ? AND repo_id = ? AND status IN ('queued','assigned','running') LIMIT 1")
+      .get(params.agentId, params.repoId) as { id: string } | undefined;
+    if (active) return reply.code(409).send({ error: "project_has_running_job" });
+    try {
+      const result = await requestAgentProject(params.agentId, {
+        type: "project.delete",
+        requestId: id("req"),
+        repoId: params.repoId
+      });
+      if (!result.ok) return reply.code(400).send({ error: result.error ?? "project_delete_failed" });
+      const chatRows = db.prepare("SELECT id FROM chats WHERE agent_id = ? AND repo_id = ?")
+        .all(params.agentId, params.repoId) as Array<{ id: string }>;
+      const jobRows = db.prepare("SELECT id FROM jobs WHERE agent_id = ? AND repo_id = ?")
+        .all(params.agentId, params.repoId) as Array<{ id: string }>;
+      db.exec("BEGIN");
+      try {
+        for (const job of jobRows) db.prepare("DELETE FROM job_logs WHERE job_id = ?").run(job.id);
+        db.prepare("DELETE FROM jobs WHERE agent_id = ? AND repo_id = ?").run(params.agentId, params.repoId);
+        for (const chat of chatRows) db.prepare("DELETE FROM chat_messages WHERE chat_id = ?").run(chat.id);
+        db.prepare("DELETE FROM chats WHERE agent_id = ? AND repo_id = ?").run(params.agentId, params.repoId);
+        db.prepare("DELETE FROM repos WHERE agent_id = ? AND id = ?").run(params.agentId, params.repoId);
+        db.exec("COMMIT");
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+      if (result.repos) upsertRepos(params.agentId, result.repos);
+      broadcast({ type: "repos.updated", agentId: params.agentId, repos: result.repos ?? [] });
       return { ok: true };
     } catch (error) {
       return reply.code(503).send({ error: error instanceof Error ? error.message : "agent_error" });

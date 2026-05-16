@@ -191,6 +191,7 @@ function App() {
   const [deployNotice, setDeployNotice] = useState("");
   const [deployBusy, setDeployBusy] = useState(false);
   const [chatNotice, setChatNotice] = useState("");
+  const [projectNotice, setProjectNotice] = useState("");
 
   const selectedRepo = useMemo(() => repos.find((repo) => `${repo.agentId}:${repo.id}` === repoKey), [repoKey, repos]);
   const activeChat = useMemo(() => chats.find((chat) => chat.id === activeChatId), [activeChatId, chats]);
@@ -316,6 +317,7 @@ function App() {
     setOriginalProjectPath(repo.pathMasked);
     setSandbox(repo.defaultSandbox);
     setProjectPanel("settings");
+    setProjectNotice("");
   }
 
   useEffect(() => {
@@ -396,6 +398,30 @@ function App() {
       setRepoKey(`${selectedAgent.id}:${data.repoId}`);
       setSandbox("danger-full-access");
     }
+  }
+
+  async function deleteProject() {
+    if (!csrf || !selectedRepo) return;
+    const activeInProject = activeJob?.agentId === selectedRepo.agentId && activeJob.repoId === selectedRepo.id && ["queued", "assigned", "running"].includes(activeJob.status);
+    if (activeInProject) {
+      setProjectNotice("Stop the running job before removing this project from the service.");
+      return;
+    }
+    setBusy(true);
+    setProjectNotice("");
+    const response = await api(`/api/projects/${selectedRepo.agentId}/${selectedRepo.id}`, {
+      method: "DELETE",
+      headers: { "x-csrf-token": csrf },
+      body: "{}"
+    });
+    const data = await response.json().catch(() => ({}));
+    setBusy(false);
+    if (!response.ok) {
+      setProjectNotice(data.error === "project_has_running_job" ? "Stop the running job before removing this project from the service." : data.error || "Project remove failed.");
+      return;
+    }
+    clearProjectSelection();
+    await refresh();
   }
 
   async function createChat(event: React.FormEvent) {
@@ -716,7 +742,11 @@ function App() {
               <button className={sandbox === item ? "active" : ""} key={item} type="button" onClick={() => setSandbox(item)}>{SANDBOX_LABELS[item]}</button>
             ))}
           </div>
+          {projectNotice && <div className="notice danger">{projectNotice}</div>}
           <button disabled={busy || !online} type="submit"><Save size={16} /> Save project</button>
+          {projectPanel === "settings" && (
+            <button className="danger-button" disabled={busy || !selectedRepo} type="button" onClick={deleteProject}>Remove project from service</button>
+          )}
         </form>
       )}
 
