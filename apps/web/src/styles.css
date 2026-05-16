@@ -1073,6 +1073,17 @@ label {
   font-weight: 800;
 }
 
+.checkbox-row {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  width: fit-content;
+  color: var(--text);
+}
+
+.checkbox-row input {
+  width: auto;
+}
+
 button:disabled {
   opacity: 0.55;
   cursor: not-allowed;

@@ -49,6 +49,17 @@ type Agent = {
   };
 };
 
+type DeployConfig = {
+  sshTarget: string;
+  sourceDir: string;
+  cleanRemote: boolean;
+  buildCommand?: {
+    command: string;
+    args: string[];
+    timeoutMs: number;
+  };
+};
+
 type Repo = {
   id: string;
   agentId: string;
@@ -57,6 +68,7 @@ type Repo = {
   githubUrl?: string;
   serverPath?: string;
   domain?: string;
+  deploy?: DeployConfig;
   currentBranch?: string;
   dirty: boolean;
   defaultSandbox: Sandbox;
@@ -140,6 +152,31 @@ function defaultProjectPath(name: string) {
     .replace(/\.{2,}/g, ".")
     .replace(/^-+|-+$/g, "");
   return `C:\\Projects\\${slug || "new-project"}`;
+}
+
+function splitCommandLine(value: string) {
+  return Array.from(value.matchAll(/"([^"]*)"|'([^']*)'|[^\s]+/g)).map((match) => match[1] ?? match[2] ?? match[0]);
+}
+
+function formatBuildCommand(deploy?: DeployConfig) {
+  if (!deploy?.buildCommand) return "";
+  return [deploy.buildCommand.command, ...deploy.buildCommand.args].join(" ");
+}
+
+function buildDeployConfig(sshTarget: string, sourceDir: string, cleanRemote: boolean, buildCommand: string): DeployConfig | undefined {
+  const target = sshTarget.trim();
+  if (!target) return undefined;
+  const parts = splitCommandLine(buildCommand.trim());
+  return {
+    sshTarget: target,
+    sourceDir: sourceDir.trim() || "dist",
+    cleanRemote,
+    buildCommand: parts[0] ? {
+      command: parts[0],
+      args: parts.slice(1),
+      timeoutMs: 900000
+    } : undefined
+  };
 }
 
 function diffRows(stat: string | null) {
@@ -343,6 +380,10 @@ function App() {
   const [projectGithubUrl, setProjectGithubUrl] = useState("");
   const [projectServerPath, setProjectServerPath] = useState("");
   const [projectDomain, setProjectDomain] = useState("");
+  const [projectDeploySshTarget, setProjectDeploySshTarget] = useState("");
+  const [projectDeploySourceDir, setProjectDeploySourceDir] = useState("dist");
+  const [projectDeployBuildCommand, setProjectDeployBuildCommand] = useState("npm.cmd run build");
+  const [projectDeployCleanRemote, setProjectDeployCleanRemote] = useState(true);
   const [originalProjectPath, setOriginalProjectPath] = useState("");
   const [chatTitle, setChatTitle] = useState("");
   const [gitMessage, setGitMessage] = useState("Update project");
@@ -465,6 +506,10 @@ function App() {
     setProjectGithubUrl("");
     setProjectServerPath("");
     setProjectDomain("");
+    setProjectDeploySshTarget("myserver");
+    setProjectDeploySourceDir("dist");
+    setProjectDeployBuildCommand("npm.cmd run build");
+    setProjectDeployCleanRemote(true);
     setOriginalProjectPath("");
     setProjectPanel("new");
   }
@@ -475,6 +520,10 @@ function App() {
     setProjectGithubUrl(repo.githubUrl ?? "");
     setProjectServerPath(repo.serverPath ?? "");
     setProjectDomain(repo.domain ?? "");
+    setProjectDeploySshTarget(repo.deploy?.sshTarget ?? "");
+    setProjectDeploySourceDir(repo.deploy?.sourceDir ?? "dist");
+    setProjectDeployBuildCommand(formatBuildCommand(repo.deploy));
+    setProjectDeployCleanRemote(repo.deploy?.cleanRemote ?? true);
     setOriginalProjectPath(repo.pathMasked);
     setSandbox(repo.defaultSandbox);
     setProjectPanel("settings");
@@ -541,6 +590,7 @@ function App() {
       githubUrl: projectGithubUrl.trim(),
       serverPath: projectServerPath.trim(),
       domain: projectDomain.trim(),
+      deploy: buildDeployConfig(projectDeploySshTarget, projectDeploySourceDir, projectDeployCleanRemote, projectDeployBuildCommand) ?? null,
       defaultSandbox: sandbox,
       allowedSandboxes: SANDBOXES
     };
@@ -898,6 +948,22 @@ function App() {
             Domain
             <input placeholder="project.domain" value={projectDomain} onChange={(event) => setProjectDomain(event.target.value)} />
           </label>
+          <label>
+            Deploy SSH target
+            <input placeholder="myserver" value={projectDeploySshTarget} onChange={(event) => setProjectDeploySshTarget(event.target.value)} />
+          </label>
+          <label>
+            Deploy source folder
+            <input placeholder="dist" value={projectDeploySourceDir} onChange={(event) => setProjectDeploySourceDir(event.target.value)} />
+          </label>
+          <label>
+            Build command
+            <input placeholder="npm.cmd run build" value={projectDeployBuildCommand} onChange={(event) => setProjectDeployBuildCommand(event.target.value)} />
+          </label>
+          <label className="checkbox-row">
+            <input checked={projectDeployCleanRemote} type="checkbox" onChange={(event) => setProjectDeployCleanRemote(event.target.checked)} />
+            Clean server folder before upload
+          </label>
           <div className="segments">
             {SANDBOXES.map((item) => (
               <button className={sandbox === item ? "active" : ""} key={item} type="button" onClick={() => setSandbox(item)}>{SANDBOX_LABELS[item]}</button>
@@ -928,7 +994,7 @@ function App() {
               <input aria-label="Commit message" value={gitMessage} onChange={(event) => setGitMessage(event.target.value)} />
               <input aria-label="Remote URL" placeholder="origin URL, optional" value={gitRemoteUrl} onChange={(event) => setGitRemoteUrl(event.target.value)} />
               <button disabled={gitBusy || !gitMessage.trim()} type="submit"><UploadCloud size={16} /> Commit & push</button>
-              <button disabled={deployBusy || !selectedRepo.serverPath} type="button" onClick={deployProject}><UploadCloud size={16} /> Deploy</button>
+              <button disabled={deployBusy || !selectedRepo.serverPath || !selectedRepo.deploy?.sshTarget} type="button" onClick={deployProject}><UploadCloud size={16} /> Deploy</button>
               {gitNotice && <pre>{gitNotice}</pre>}
               {deployNotice && <pre>{deployNotice}</pre>}
             </form>
@@ -1025,7 +1091,7 @@ function App() {
           <div className="agent-rules">
             <span>Filesystem Access <strong>{sandbox === "danger-full-access" ? "Full" : "Scoped"}</strong></span>
             <span>Network Access <strong>{sandbox === "danger-full-access" ? "Enabled" : "Restricted"}</strong></span>
-            <span>Auto Deploy <strong>{selectedRepo?.serverPath ? "Ready" : "Not set"}</strong></span>
+            <span>Auto Deploy <strong>{selectedRepo?.serverPath && selectedRepo.deploy?.sshTarget ? "Ready" : "Not set"}</strong></span>
           </div>
           <div className="codex-limit">
             <div>

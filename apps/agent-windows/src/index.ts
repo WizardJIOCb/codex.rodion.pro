@@ -293,6 +293,7 @@ function connect() {
           githubUrl: optionalText(message.project.githubUrl),
           serverPath: optionalText(message.project.serverPath),
           domain: optionalText(message.project.domain),
+          deploy: message.project.deploy ?? undefined,
           defaultSandbox: message.project.defaultSandbox,
           allowedSandboxes: message.project.allowedSandboxes,
           testCommands: []
@@ -317,6 +318,7 @@ function connect() {
         if ("githubUrl" in message.patch) repo.githubUrl = optionalText(message.patch.githubUrl);
         if ("serverPath" in message.patch) repo.serverPath = optionalText(message.patch.serverPath);
         if ("domain" in message.patch) repo.domain = optionalText(message.patch.domain);
+        if ("deploy" in message.patch) repo.deploy = message.patch.deploy ?? undefined;
         if (message.patch.defaultSandbox) repo.defaultSandbox = message.patch.defaultSandbox;
         if (message.patch.allowedSandboxes) repo.allowedSandboxes = message.patch.allowedSandboxes;
         if (!repo.allowedSandboxes.includes(repo.defaultSandbox)) repo.defaultSandbox = repo.allowedSandboxes[0] ?? "read-only";

@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
-import type { CodexUsage, JobStatus, RepoInfo, Sandbox } from "@cmc/protocol";
+import type { CodexUsage, DeployConfig, JobStatus, RepoInfo, Sandbox } from "@cmc/protocol";
 
 export type UserRow = {
   id: string;
@@ -41,6 +41,7 @@ export type RepoRow = {
   github_url: string | null;
   server_path: string | null;
   domain: string | null;
+  deploy_json: string | null;
   current_branch: string | null;
   dirty: number;
   default_sandbox: Sandbox;
@@ -144,6 +145,7 @@ export function openDb(path: string): DatabaseSync {
       github_url TEXT,
       server_path TEXT,
       domain TEXT,
+      deploy_json TEXT,
       current_branch TEXT,
       dirty INTEGER NOT NULL,
       default_sandbox TEXT NOT NULL,
@@ -233,6 +235,9 @@ export function openDb(path: string): DatabaseSync {
   if (!repoColumns.some((column) => column.name === "domain")) {
     db.exec("ALTER TABLE repos ADD COLUMN domain TEXT");
   }
+  if (!repoColumns.some((column) => column.name === "deploy_json")) {
+    db.exec("ALTER TABLE repos ADD COLUMN deploy_json TEXT");
+  }
   const agentColumns = db.prepare("PRAGMA table_info(agents)").all() as Array<{ name: string }>;
   if (!agentColumns.some((column) => column.name === "codex_usage_json")) {
     db.exec("ALTER TABLE agents ADD COLUMN codex_usage_json TEXT");
@@ -279,10 +284,20 @@ export function mapRepo(row: RepoRow): RepoInfo {
     githubUrl: row.github_url ?? undefined,
     serverPath: row.server_path ?? undefined,
     domain: row.domain ?? undefined,
+    deploy: parseDeployConfig(row.deploy_json),
     currentBranch: row.current_branch ?? undefined,
     dirty: row.dirty === 1,
     defaultSandbox: row.default_sandbox,
     allowedSandboxes: JSON.parse(row.allowed_sandboxes) as Sandbox[],
     testCommands: JSON.parse(row.test_commands) as Array<{ id: string; label: string }>
   };
+}
+
+function parseDeployConfig(value: string | null): DeployConfig | undefined {
+  if (!value) return undefined;
+  try {
+    return JSON.parse(value) as DeployConfig;
+  } catch {
+    return undefined;
+  }
 }

@@ -14,6 +14,18 @@ export const JobStatusSchema = z.enum([
 ]);
 export type JobStatus = z.infer<typeof JobStatusSchema>;
 
+export const DeployConfigSchema = z.object({
+  sshTarget: z.string().min(1).max(120),
+  sourceDir: z.string().min(1).max(260).default("dist"),
+  cleanRemote: z.boolean().default(true),
+  buildCommand: z.object({
+    command: z.string().min(1).max(120),
+    args: z.array(z.string().max(200)).default([]),
+    timeoutMs: z.number().int().positive().max(3600000).default(900000)
+  }).optional()
+});
+export type DeployConfig = z.infer<typeof DeployConfigSchema>;
+
 export const RepoInfoSchema = z.object({
   id: z.string().min(1).max(80),
   name: z.string().min(1).max(120),
@@ -21,6 +33,7 @@ export const RepoInfoSchema = z.object({
   githubUrl: z.string().max(300).optional(),
   serverPath: z.string().max(260).optional(),
   domain: z.string().max(253).optional(),
+  deploy: DeployConfigSchema.optional(),
   currentBranch: z.string().optional(),
   dirty: z.boolean(),
   defaultSandbox: SandboxSchema,
@@ -186,6 +199,7 @@ export const ServerProjectCreateSchema = z.object({
     githubUrl: z.string().max(300).optional(),
     serverPath: z.string().max(260).optional(),
     domain: z.string().max(253).optional(),
+    deploy: DeployConfigSchema.nullish(),
     defaultSandbox: SandboxSchema.default("danger-full-access"),
     allowedSandboxes: z.array(SandboxSchema).min(1).default(["read-only", "workspace-write", "danger-full-access"])
   })
@@ -201,6 +215,7 @@ export const ServerProjectUpdateSchema = z.object({
     githubUrl: z.string().max(300).optional(),
     serverPath: z.string().max(260).optional(),
     domain: z.string().max(253).optional(),
+    deploy: DeployConfigSchema.nullish(),
     defaultSandbox: SandboxSchema.optional(),
     allowedSandboxes: z.array(SandboxSchema).min(1).optional()
   })
@@ -262,6 +277,7 @@ export const CreateProjectSchema = z.object({
   githubUrl: z.string().max(300).optional(),
   serverPath: z.string().max(260).optional(),
   domain: z.string().max(253).optional(),
+  deploy: DeployConfigSchema.nullish(),
   defaultSandbox: SandboxSchema.default("danger-full-access")
 });
 export type CreateProject = z.infer<typeof CreateProjectSchema>;
@@ -272,6 +288,7 @@ export const UpdateProjectSchema = z.object({
   githubUrl: z.string().max(300).optional(),
   serverPath: z.string().max(260).optional(),
   domain: z.string().max(253).optional(),
+  deploy: DeployConfigSchema.nullish(),
   defaultSandbox: SandboxSchema.optional(),
   allowedSandboxes: z.array(SandboxSchema).min(1).optional()
 });
