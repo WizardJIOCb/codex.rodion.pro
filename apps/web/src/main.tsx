@@ -136,7 +136,7 @@ function defaultProjectPath(name: string) {
   const slug = name
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9Р°-СЏС‘.]+/gi, "-")
+    .replace(/[^a-z0-9а-яё.]+/gi, "-")
     .replace(/\.{2,}/g, ".")
     .replace(/^-+|-+$/g, "");
   return `C:\\Projects\\${slug || "new-project"}`;
@@ -552,7 +552,7 @@ function App() {
             <button className={sandbox === item ? "active" : ""} key={item} type="button" onClick={() => setSandbox(item)}>{SANDBOX_LABELS[item]}</button>
           ))}
         </div>
-        <textarea placeholder={activeChat ? `РќР°РїРёС€Рё СЃР»РµРґСѓСЋС‰СѓСЋ Р·Р°РґР°С‡Сѓ РІ С‡Р°С‚ "${activeChat.title}"...` : "РќР°РїРёС€Рё РїРµСЂРІСѓСЋ Р·Р°РґР°С‡Сѓ, С‡Р°С‚ СЃРѕР·РґР°СЃС‚СЃСЏ Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё..."} value={prompt} onChange={(event) => setPrompt(event.target.value)} />
+        <textarea placeholder={activeChat ? `Напиши следующую задачу в чат "${activeChat.title}"...` : "Напиши первую задачу, чат создастся автоматически..."} value={prompt} onChange={(event) => setPrompt(event.target.value)} />
         <div className="sticky-submit">
           <button disabled={busy || !prompt.trim()} type="submit"><Play size={18} /> Run Codex</button>
           {activeJob && ["queued", "assigned", "running"].includes(activeJob.status) && (
