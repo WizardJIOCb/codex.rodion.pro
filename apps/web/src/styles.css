@@ -1058,6 +1058,18 @@ textarea:focus {
 
 .message-attachment {
   grid-template-columns: auto minmax(0, 1fr);
+  font: inherit;
+  text-align: left;
+  cursor: default;
+}
+
+button.message-attachment.image {
+  cursor: zoom-in;
+}
+
+button.message-attachment.image:hover {
+  border-color: var(--line-strong);
+  background: #ffffff;
 }
 
 .attachment-chip span,
@@ -1099,6 +1111,65 @@ textarea:focus {
 .message-attachment.image img {
   width: 64px;
   height: 64px;
+}
+
+.image-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: max(18px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(18px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
+  background: rgba(24, 24, 22, 0.72);
+  backdrop-filter: blur(3px);
+}
+
+.image-lightbox figure {
+  position: relative;
+  max-width: min(96vw, 1280px);
+  max-height: 94vh;
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.image-lightbox img {
+  max-width: 100%;
+  max-height: calc(94vh - 54px);
+  object-fit: contain;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
+}
+
+.image-lightbox button {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  border-radius: 999px;
+  color: #ffffff;
+  background: rgba(20, 20, 18, 0.72);
+}
+
+.image-lightbox figcaption {
+  min-width: 0;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: #ffffff;
+  background: rgba(20, 20, 18, 0.64);
+}
+
+.image-lightbox figcaption span {
+  color: rgba(255, 255, 255, 0.76);
 }
 
 .attachment-remove {

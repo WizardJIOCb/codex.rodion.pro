@@ -169,6 +169,13 @@ type MessageAttachment = {
   dataBase64?: string;
 };
 
+type ImagePreview = {
+  src: string;
+  name: string;
+  mimeType: string;
+  size: number;
+};
+
 type PendingAttachment = {
   id: string;
   name: string;
@@ -424,26 +431,40 @@ function attachmentDataUrl(attachment: MessageAttachment) {
   return attachment.dataBase64 && isPreviewableImage(attachment.mimeType) ? `data:${attachment.mimeType};base64,${attachment.dataBase64}` : undefined;
 }
 
-function renderMessageAttachments(attachments?: MessageAttachment[]) {
+function renderMessageAttachments(attachments: MessageAttachment[] | undefined, onPreview: (preview: ImagePreview) => void) {
   if (!attachments?.length) return null;
   return (
     <div className="message-attachments">
       {attachments.map((attachment, index) => {
         const previewUrl = attachmentDataUrl(attachment);
-        return (
-          <a
-            className={previewUrl ? "message-attachment image" : "message-attachment"}
-            href={previewUrl}
-            key={attachment.id ?? `${attachment.name}-${index}`}
-            target="_blank"
-            rel="noreferrer"
-          >
+        const body = (
+          <>
             {previewUrl ? <img alt="" src={previewUrl} /> : <Paperclip size={16} />}
             <span>
               <strong>{attachment.name}</strong>
               <small>{attachment.mimeType} · {formatBytes(attachment.size)}</small>
             </span>
-          </a>
+          </>
+        );
+        if (previewUrl) {
+          return (
+            <button
+              className="message-attachment image"
+              key={attachment.id ?? `${attachment.name}-${index}`}
+              type="button"
+              onClick={() => onPreview({ src: previewUrl, name: attachment.name, mimeType: attachment.mimeType, size: attachment.size })}
+            >
+              {body}
+            </button>
+          );
+        }
+        return (
+          <div
+            className="message-attachment"
+            key={attachment.id ?? `${attachment.name}-${index}`}
+          >
+            {body}
+          </div>
         );
       })}
     </div>
@@ -580,6 +601,7 @@ function App() {
   const [newAgentUserId, setNewAgentUserId] = useState("");
   const [agentSetup, setAgentSetup] = useState<AgentSetup | null>(null);
   const [settingsNotice, setSettingsNotice] = useState("");
+  const [imagePreview, setImagePreview] = useState<ImagePreview | null>(null);
 
   const selectedRepo = useMemo(() => repos.find((repo) => `${repo.agentId}:${repo.id}` === repoKey), [repoKey, repos]);
   const activeChat = useMemo(() => chats.find((chat) => chat.id === activeChatId), [activeChatId, chats]);
@@ -830,6 +852,15 @@ function App() {
   useEffect(() => {
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    if (!imagePreview) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setImagePreview(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [imagePreview]);
 
   async function login(event: React.FormEvent) {
     event.preventDefault();
@@ -1885,7 +1916,7 @@ function App() {
                             <small>{new Date(message.createdAt).toLocaleString()}</small>
                           </div>
                           {renderRichText(message.content, "rich-text message-body")}
-                          {renderMessageAttachments(message.attachments)}
+                          {renderMessageAttachments(message.attachments, setImagePreview)}
                         </article>
                       )) : (
                         <div className="empty">Начни этот чат или дождись синхронизации истории из локального Codex/VS Code.</div>
@@ -2010,6 +2041,20 @@ function App() {
           </div>
         </section>
       </aside>
+      {imagePreview && (
+        <div className="image-lightbox" role="dialog" aria-modal="true" aria-label={imagePreview.name} onClick={() => setImagePreview(null)}>
+          <figure onClick={(event) => event.stopPropagation()}>
+            <button aria-label="Close image preview" type="button" onClick={() => setImagePreview(null)}>
+              <X size={20} />
+            </button>
+            <img alt={imagePreview.name} src={imagePreview.src} />
+            <figcaption>
+              <strong>{imagePreview.name}</strong>
+              <span>{imagePreview.mimeType} · {formatBytes(imagePreview.size)}</span>
+            </figcaption>
+          </figure>
+        </div>
+      )}
     </main>
   );
 }
