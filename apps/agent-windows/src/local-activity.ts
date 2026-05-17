@@ -4,7 +4,10 @@ import { DatabaseSync } from "node:sqlite";
 import type { LocalCodexActivity } from "@cmc/protocol";
 import type { AgentConfig, RepoConfig } from "./config.js";
 
-const BUSY_WINDOW_MS = 15000;
+const BUSY_WINDOW_MS = 6000;
+
+let busyKey = "";
+let busySinceMs = 0;
 
 type Candidate = {
   repoId?: string;
@@ -16,34 +19,46 @@ type Candidate = {
 export function detectLocalCodexActivity(config: AgentConfig, currentJobId?: string): LocalCodexActivity {
   const detectedAt = new Date().toISOString();
   if (currentJobId) {
+    markBusy(`web:${currentJobId}`);
     return {
       status: "busy",
       summary: "Codex is running a web task from codex.rodion.pro.",
       source: "codex.rodion.pro",
-      detectedAt
+      detectedAt,
+      busySinceAt: new Date(busySinceMs).toISOString()
     };
   }
 
   const candidate = [...recentCodexThreads(config), ...recentVsCodeSessions(config)]
     .sort((a, b) => b.updatedAt - a.updatedAt)[0];
   if (candidate && Date.now() - candidate.updatedAt <= BUSY_WINDOW_MS) {
+    markBusy(`${candidate.source}:${candidate.repoId ?? ""}:${candidate.title ?? ""}`);
     return {
       status: "busy",
       summary: `${candidate.source} is updating a local Codex chat.`,
       source: candidate.source,
       detectedAt,
+      busySinceAt: new Date(busySinceMs).toISOString(),
       repoId: candidate.repoId,
       chatTitle: candidate.title?.slice(0, 160),
       updatedAt: new Date(candidate.updatedAt).toISOString()
     };
   }
 
+  busyKey = "";
+  busySinceMs = 0;
   return {
     status: "idle",
     summary: "No recent local Codex activity.",
     source: "agent heartbeat",
     detectedAt
   };
+}
+
+function markBusy(key: string): void {
+  if (busyKey === key && busySinceMs) return;
+  busyKey = key;
+  busySinceMs = Date.now();
 }
 
 function recentCodexThreads(config: AgentConfig): Candidate[] {

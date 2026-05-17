@@ -29,6 +29,7 @@ import {
   Square,
   UploadCloud,
   UserCircle,
+  Wrench,
   Wifi,
   WifiOff,
   X
@@ -57,6 +58,7 @@ type Agent = {
     summary: string;
     source: string;
     detectedAt: string;
+    busySinceAt?: string;
     repoId?: string;
     chatTitle?: string;
     updatedAt?: string;
@@ -200,6 +202,8 @@ type Job = {
   gitDiffStat: string | null;
   gitDiff: string | null;
   createdAt: string;
+  startedAt?: string | null;
+  finishedAt?: string | null;
 };
 
 type Log = {
@@ -480,6 +484,11 @@ function summarizeDisplayCommand(command: string) {
     .slice(0, 180);
 }
 
+function messageJobId(message: ChatMessage) {
+  const metadataJobId = typeof message.metadata?.jobId === "string" ? message.metadata.jobId : "";
+  return metadataJobId || message.externalId?.match(/^job:([^:]+):/)?.[1] || "";
+}
+
 function displayLogMessage(log: Log) {
   const rawText = log.message.trim();
   if (!rawText) return null;
@@ -604,6 +613,8 @@ function App() {
   const [agentSetup, setAgentSetup] = useState<AgentSetup | null>(null);
   const [settingsNotice, setSettingsNotice] = useState("");
   const [imagePreview, setImagePreview] = useState<ImagePreview | null>(null);
+  const [expandedActions, setExpandedActions] = useState<Record<string, boolean>>({});
+  const [nowTick, setNowTick] = useState(() => Date.now());
 
   const selectedRepo = useMemo(() => repos.find((repo) => `${repo.agentId}:${repo.id}` === repoKey), [repoKey, repos]);
   const activeChat = useMemo(() => chats.find((chat) => chat.id === activeChatId), [activeChatId, chats]);
@@ -611,6 +622,14 @@ function App() {
   const online = agents.some((agent) => agent.status === "online");
   const localActivity = selectedAgent?.localActivity;
   const localCodexBusy = localActivity?.status === "busy" || Boolean(selectedAgent?.current_job_id);
+  const activeRunBusy = Boolean(activeJob && ["queued", "assigned", "running"].includes(activeJob.status));
+  const thinkingSince = activeRunBusy
+    ? activeJob?.startedAt || activeJob?.createdAt
+    : localCodexBusy
+      ? localActivity?.busySinceAt || localActivity?.updatedAt || localActivity?.detectedAt
+      : undefined;
+  const thinkingSeconds = thinkingSince ? Math.max(0, Math.floor((nowTick - Date.parse(thinkingSince)) / 1000)) : 0;
+  const thinkingChatId = activeRunBusy ? activeJob?.chatId : localCodexBusy ? activeChatId : undefined;
   const activeChatIdRef = useRef(activeChatId);
   const activeJobIdRef = useRef(activeJob?.id ?? "");
   const selectedRepoRef = useRef<Repo | undefined>(selectedRepo);
@@ -904,6 +923,12 @@ function App() {
   useEffect(() => {
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    if (!localCodexBusy && !activeRunBusy) return;
+    const timer = window.setInterval(() => setNowTick(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [localCodexBusy, activeRunBusy]);
 
   useEffect(() => {
     if (!imagePreview) return;
@@ -1591,10 +1616,15 @@ function App() {
   function renderComposer() {
     if (!selectedRepo) return null;
     const canSubmit = Boolean(prompt.trim() || attachments.length);
-    const activeRunBusy = Boolean(activeJob && ["queued", "assigned", "running"].includes(activeJob.status));
     const runDisabled = busy || !canSubmit || localCodexBusy || activeRunBusy;
     return (
       <form className="composer" onSubmit={createJob}>
+        {(localCodexBusy || activeRunBusy) && (
+          <div className="thinking-strip">
+            <RefreshCw className="spin" size={15} />
+            <span>Codex думает {formatDuration(thinkingSeconds)}</span>
+          </div>
+        )}
         {attachments.length > 0 && (
           <div className="attachment-list">
             {attachments.map((attachment) => (
@@ -1760,7 +1790,10 @@ function App() {
                         {chats.map((chat) => (
                           <div className={activeChatId === chat.id ? "nav-chat-row active" : "nav-chat-row"} key={chat.id}>
                             <button className="nav-leaf chat-child" onClick={() => loadChat(chat.id)}>
-                              <span>{chat.title}</span>
+                              <span className="nav-chat-title">
+                                {thinkingChatId === chat.id && <RefreshCw className="spin" size={13} />}
+                                <span>{chat.title}</span>
+                              </span>
                               <small>{new Date(chat.updatedAt).toLocaleString()}</small>
                             </button>
                             <button className="nav-menu-trigger" disabled={busy} onClick={() => setChatMenuId((value) => value === chat.id ? "" : chat.id)} title="Chat menu">
@@ -1994,6 +2027,30 @@ function App() {
                           </div>
                           {renderRichText(message.content, "rich-text message-body")}
                           {renderMessageAttachments(message.attachments, setImagePreview)}
+                          {messageJobId(message) === activeJob?.id && activeRunBusy && (
+                            <div className="message-thinking">
+                              <RefreshCw className="spin" size={14} />
+                              <span>Codex думает {formatDuration(thinkingSeconds)}</span>
+                            </div>
+                          )}
+                          {message.role === "assistant" && typeof message.metadata?.gitDiffStat === "string" && message.metadata.gitDiffStat && (
+                            <div className="message-actions">
+                              <button type="button" onClick={() => setExpandedActions((current) => ({ ...current, [message.id]: !current[message.id] }))}>
+                                <Wrench size={15} />
+                                <span>Edited {diffRows(String(message.metadata?.gitDiffStat)).length} files</span>
+                              </button>
+                              {expandedActions[message.id] && (
+                                <div className="message-action-details">
+                                  {diffRows(String(message.metadata.gitDiffStat)).map((row) => (
+                                    <div key={row.file}>
+                                      <span>{row.file}</span>
+                                      <small>{row.changed} {row.bars}</small>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </article>
                       )) : (
                         <div className="empty">Начни этот чат или дождись синхронизации истории из локального Codex/VS Code.</div>

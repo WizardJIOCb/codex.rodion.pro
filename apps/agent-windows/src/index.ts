@@ -11,7 +11,7 @@ import { makeRedactor } from "./redact.js";
 import { scanRepos } from "./repo-scanner.js";
 
 const LOCAL_CHAT_SYNC_INTERVAL_MS = 15000;
-const LOCAL_ACTIVITY_INTERVAL_MS = 10000;
+const LOCAL_ACTIVITY_INTERVAL_MS = 3000;
 const config = loadAgentConfig();
 const redact = makeRedactor(config.redactPatterns);
 const token = process.env[config.tokenEnv];

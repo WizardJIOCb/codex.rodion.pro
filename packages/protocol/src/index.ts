@@ -63,6 +63,7 @@ export const LocalCodexActivitySchema = z.object({
   summary: z.string().min(1).max(300),
   source: z.string().min(1).max(80),
   detectedAt: z.string().datetime(),
+  busySinceAt: z.string().datetime().optional(),
   repoId: z.string().min(1).max(80).optional(),
   chatTitle: z.string().max(160).optional(),
   updatedAt: z.string().datetime().optional()
