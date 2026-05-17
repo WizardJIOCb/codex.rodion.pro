@@ -1014,6 +1014,11 @@ textarea:focus {
   background: var(--panel-2);
 }
 
+.sticky-submit .action-menu button {
+  justify-content: flex-start;
+  gap: 8px;
+}
+
 .sticky-submit .run-button {
   width: 100%;
 }
