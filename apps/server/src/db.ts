@@ -98,6 +98,17 @@ export type ChatMessageRow = {
   created_at: string;
 };
 
+export type AttachmentRow = {
+  id: string;
+  job_id: string;
+  chat_message_id: string | null;
+  name: string;
+  mime_type: string;
+  size: number;
+  data_base64: string;
+  created_at: string;
+};
+
 export type LogRow = {
   id: string;
   job_id: string;
@@ -208,6 +219,16 @@ export function openDb(path: string): DatabaseSync {
       message TEXT NOT NULL,
       at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS job_attachments (
+      id TEXT PRIMARY KEY,
+      job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+      chat_message_id TEXT REFERENCES chat_messages(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      size INTEGER NOT NULL,
+      data_base64 TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS deleted_chat_sync (
       agent_id TEXT NOT NULL,
       repo_id TEXT NOT NULL,
@@ -220,6 +241,8 @@ export function openDb(path: string): DatabaseSync {
     CREATE INDEX IF NOT EXISTS idx_chats_repo_updated ON chats(agent_id, repo_id, updated_at);
     CREATE INDEX IF NOT EXISTS idx_logs_job_at ON job_logs(job_id, at);
     CREATE INDEX IF NOT EXISTS idx_messages_chat_at ON chat_messages(chat_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_attachments_job ON job_attachments(job_id);
+    CREATE INDEX IF NOT EXISTS idx_attachments_message ON job_attachments(chat_message_id);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_external ON chat_messages(chat_id, source, external_id) WHERE external_id IS NOT NULL;
   `);
   const userColumns = db.prepare("PRAGMA table_info(users)").all() as Array<{ name: string }>;
@@ -273,6 +296,8 @@ export function openDb(path: string): DatabaseSync {
   }
   db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_chat_created ON jobs(chat_id, created_at)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_messages_chat_at ON chat_messages(chat_id, created_at)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_attachments_job ON job_attachments(job_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_attachments_message ON job_attachments(chat_message_id)");
   db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_chats_external ON chats(agent_id, source, external_id) WHERE external_id IS NOT NULL");
   db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_external ON chat_messages(chat_id, source, external_id) WHERE external_id IS NOT NULL");
   return db;

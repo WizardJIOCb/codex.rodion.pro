@@ -58,6 +58,14 @@ export const CodexUsageSchema = z.object({
 });
 export type CodexUsage = z.infer<typeof CodexUsageSchema>;
 
+export const JobAttachmentSchema = z.object({
+  name: z.string().min(1).max(180),
+  mimeType: z.string().min(1).max(120),
+  size: z.number().int().positive().max(5 * 1024 * 1024),
+  dataBase64: z.string().min(1).max(7 * 1024 * 1024).regex(/^[A-Za-z0-9+/]+={0,2}$/)
+});
+export type JobAttachment = z.infer<typeof JobAttachmentSchema>;
+
 export const AgentHelloSchema = z.object({
   type: z.literal("agent.hello"),
   agentId: z.string().min(1),
@@ -201,7 +209,8 @@ export const ServerJobRunSchema = z.object({
     sandbox: SandboxSchema,
     branchMode: z.enum(["current", "create-per-job"]).default("current"),
     kind: z.enum(["codex", "test"]).default("codex"),
-    testCommandId: z.string().optional()
+    testCommandId: z.string().optional(),
+    attachments: z.array(JobAttachmentSchema).max(8).default([])
   })
 });
 
@@ -294,7 +303,8 @@ export const CreateJobSchema = z.object({
   chatId: z.string().optional(),
   prompt: z.string().min(3).max(16000),
   sandbox: SandboxSchema,
-  branchMode: z.enum(["current", "create-per-job"]).default("current")
+  branchMode: z.enum(["current", "create-per-job"]).default("current"),
+  attachments: z.array(JobAttachmentSchema).max(8).default([])
 });
 export type CreateJob = z.infer<typeof CreateJobSchema>;
 

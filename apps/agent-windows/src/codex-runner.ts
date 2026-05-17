@@ -1,4 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { AgentJobDone, AgentJobLog, AgentJobProgress } from "./types.js";
 import type { AgentConfig, RepoConfig } from "./config.js";
 import { minimalEnv, needsShell, runCapture } from "./process-utils.js";
@@ -13,6 +15,12 @@ type RunContext = {
     branchMode: "current" | "create-per-job";
     kind: "codex" | "test";
     testCommandId?: string;
+    attachments?: Array<{
+      name: string;
+      mimeType: string;
+      size: number;
+      dataBase64: string;
+    }>;
   };
   sendLog: (log: AgentJobLog) => void;
   sendProgress: (progress: AgentJobProgress) => void;
@@ -73,6 +81,17 @@ export class Runner {
 
   private async runCodex(context: RunContext, repo: RepoConfig): Promise<AgentJobDone> {
     const codexCommand = codexExecutable();
+    const attachments = prepareAttachments(context, repo);
+    const prompt = attachments.length
+      ? [
+        context.job.prompt,
+        "",
+        "Attached files saved locally for this task:",
+        ...attachments.map((attachment) => `- ${attachment.name} (${attachment.mimeType}, ${attachment.size} bytes): ${attachment.path}`),
+        "",
+        "Use these file paths as the attached user-provided context."
+      ].join("\n")
+      : context.job.prompt;
     const args = [
       ...codexCommand.prefixArgs,
       "exec",
@@ -85,7 +104,7 @@ export class Runner {
       "approval_policy=\"never\"",
       "-"
     ];
-    return this.spawnAndCollect(context, repo, codexCommand.command, args, context.config.maxJobDurationMs, context.job.prompt);
+    return this.spawnAndCollect(context, repo, codexCommand.command, args, context.config.maxJobDurationMs, prompt);
   }
 
   private spawnAndCollect(context: RunContext, repo: RepoConfig, command: string, args: string[], timeoutMs: number, stdinInput?: string): Promise<AgentJobDone> {
@@ -173,6 +192,39 @@ export class Runner {
       });
     });
   }
+}
+
+function prepareAttachments(context: RunContext, repo: RepoConfig): Array<{ name: string; mimeType: string; size: number; path: string }> {
+  const attachments = context.job.attachments ?? [];
+  if (!attachments.length) return [];
+  const root = join(repo.path, ".codex-web-attachments", safePathSegment(context.job.id));
+  mkdirSync(root, { recursive: true });
+  ensureGitExclude(repo.path);
+  return attachments.map((attachment, index) => {
+    const name = safeFilename(attachment.name, index);
+    const path = join(root, name);
+    const bytes = Buffer.from(attachment.dataBase64, "base64");
+    if (bytes.length !== attachment.size) throw new Error(`Attachment size mismatch: ${attachment.name}`);
+    writeFileSync(path, bytes);
+    return { name, mimeType: attachment.mimeType, size: attachment.size, path };
+  });
+}
+
+function ensureGitExclude(repoPath: string): void {
+  const excludePath = join(repoPath, ".git", "info", "exclude");
+  if (!existsSync(excludePath)) return;
+  const current = readFileSync(excludePath, "utf8");
+  if (current.includes(".codex-web-attachments/")) return;
+  appendFileSync(excludePath, `${current.endsWith("\n") ? "" : "\n"}.codex-web-attachments/\n`, "utf8");
+}
+
+function safePathSegment(value: string): string {
+  return value.replace(/[^a-z0-9_-]/gi, "_").slice(0, 80) || "job";
+}
+
+function safeFilename(value: string, index: number): string {
+  const cleaned = value.replace(/[<>:"/\\|?*\x00-\x1F]/g, "_").replace(/^\.+/g, "").trim();
+  return `${String(index + 1).padStart(2, "0")}-${(cleaned || "attachment").slice(0, 120)}`;
 }
 
 function codexExecutable(): { command: string; prefixArgs: string[] } {

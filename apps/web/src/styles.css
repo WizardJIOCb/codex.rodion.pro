@@ -676,7 +676,7 @@ textarea:focus {
   position: sticky;
   bottom: max(8px, env(safe-area-inset-bottom));
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
   gap: 6px;
   align-items: center;
   overflow: visible;
@@ -744,6 +744,116 @@ textarea:focus {
 
 .sticky-submit .run-button {
   width: 100%;
+}
+
+.file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.attachment-picker {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--text);
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.attachment-picker:hover {
+  border-color: var(--line-strong);
+  background: var(--panel-2);
+}
+
+.attachment-list,
+.message-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  min-width: 0;
+}
+
+.attachment-chip,
+.message-attachment {
+  min-width: 0;
+  max-width: min(320px, 100%);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 7px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--text);
+  background: #fbfbfa;
+  text-decoration: none;
+}
+
+.message-attachment {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.attachment-chip span,
+.message-attachment span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.attachment-chip strong,
+.message-attachment strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.attachment-chip small,
+.message-attachment small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.attachment-thumb,
+.message-attachment img {
+  width: 42px;
+  height: 42px;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.message-attachment.image {
+  max-width: min(420px, 100%);
+}
+
+.message-attachment.image img {
+  width: 64px;
+  height: 64px;
+}
+
+.attachment-remove {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 6px;
+  color: var(--muted);
+  background: transparent;
+}
+
+.attachment-remove:hover {
+  color: var(--danger);
+  background: #fff1f0;
 }
 
 .workspace {
@@ -1301,7 +1411,7 @@ button:disabled {
   }
 
   .sticky-submit {
-    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-columns: auto auto minmax(0, 1fr);
   }
 
   .sticky-submit .stop {

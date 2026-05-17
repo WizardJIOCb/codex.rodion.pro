@@ -10,6 +10,7 @@ import {
   GitBranch,
   LogOut,
   MessageSquare,
+  Paperclip,
   Play,
   Plus,
   RefreshCw,
@@ -20,7 +21,8 @@ import {
   Trash2,
   UploadCloud,
   Wifi,
-  WifiOff
+  WifiOff,
+  X
 } from "lucide-react";
 import "./styles.css";
 
@@ -116,6 +118,24 @@ type ChatMessage = {
   externalId?: string | null;
   metadata?: Record<string, unknown>;
   createdAt: string;
+  attachments?: MessageAttachment[];
+};
+
+type MessageAttachment = {
+  id?: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  dataBase64?: string;
+};
+
+type PendingAttachment = {
+  id: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  dataBase64: string;
+  previewUrl?: string;
 };
 
 type Job = {
@@ -197,6 +217,37 @@ function buildDeployConfig(sshTarget: string, sourceDir: string, remoteSubdir: s
       timeoutMs: 900000
     } : undefined
   };
+}
+
+function formatBytes(value: number) {
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function isPreviewableImage(mimeType: string) {
+  return ["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/bmp"].includes(mimeType.toLowerCase());
+}
+
+function readFileAttachment(file: File): Promise<PendingAttachment> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error ?? new Error("Could not read file."));
+    reader.onload = () => {
+      const result = String(reader.result ?? "");
+      const comma = result.indexOf(",");
+      const dataBase64 = comma >= 0 ? result.slice(comma + 1) : result;
+      resolve({
+        id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        name: file.name || `pasted-image-${Date.now()}.png`,
+        mimeType: file.type || "application/octet-stream",
+        size: file.size,
+        dataBase64,
+        previewUrl: isPreviewableImage(file.type) ? result : undefined
+      });
+    };
+    reader.readAsDataURL(file);
+  });
 }
 
 function diffRows(stat: string | null) {
@@ -320,6 +371,36 @@ function renderRichText(value: string, className = "rich-text") {
   return <div className={className}>{blocks.length ? blocks : <p>{value}</p>}</div>;
 }
 
+function attachmentDataUrl(attachment: MessageAttachment) {
+  return attachment.dataBase64 && isPreviewableImage(attachment.mimeType) ? `data:${attachment.mimeType};base64,${attachment.dataBase64}` : undefined;
+}
+
+function renderMessageAttachments(attachments?: MessageAttachment[]) {
+  if (!attachments?.length) return null;
+  return (
+    <div className="message-attachments">
+      {attachments.map((attachment, index) => {
+        const previewUrl = attachmentDataUrl(attachment);
+        return (
+          <a
+            className={previewUrl ? "message-attachment image" : "message-attachment"}
+            href={previewUrl}
+            key={attachment.id ?? `${attachment.name}-${index}`}
+            target="_blank"
+            rel="noreferrer"
+          >
+            {previewUrl ? <img alt="" src={previewUrl} /> : <Paperclip size={16} />}
+            <span>
+              <strong>{attachment.name}</strong>
+              <small>{attachment.mimeType} · {formatBytes(attachment.size)}</small>
+            </span>
+          </a>
+        );
+      })}
+    </div>
+  );
+}
+
 function summarizeDisplayCommand(command: string) {
   return command
     .replace(/"C:\\Windows\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe"\s+-Command\s+/i, "")
@@ -391,6 +472,7 @@ function App() {
   const [logs, setLogs] = useState<Log[]>([]);
   const [progressByJob, setProgressByJob] = useState<Record<string, JobProgress>>({});
   const [prompt, setPrompt] = useState("");
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [repoKey, setRepoKey] = useState("");
   const [activeChatId, setActiveChatId] = useState("");
   const [sandbox, setSandbox] = useState<Sandbox>("danger-full-access");
@@ -421,6 +503,7 @@ function App() {
   const [sslBusy, setSslBusy] = useState(false);
   const [chatNotice, setChatNotice] = useState("");
   const [projectNotice, setProjectNotice] = useState("");
+  const [attachmentNotice, setAttachmentNotice] = useState("");
   const [view, setView] = useState<"projects" | "settings">("projects");
   const [users, setUsers] = useState<User[]>([]);
   const [newUserEmail, setNewUserEmail] = useState("");
@@ -717,8 +800,9 @@ function App() {
 
   async function createJob(event: React.FormEvent) {
     event.preventDefault();
-    if (!selectedRepo || !prompt.trim() || !csrf) return;
+    if (!selectedRepo || (!prompt.trim() && !attachments.length) || !csrf) return;
     let targetChatId = activeChatId;
+    const promptText = prompt.trim() || "Посмотри вложенные файлы.";
     setBusy(true);
     if (!targetChatId) {
       const chatResponse = await api("/api/chats", {
@@ -727,7 +811,7 @@ function App() {
         body: JSON.stringify({
           agentId: selectedRepo.agentId,
           repoId: selectedRepo.id,
-          title: prompt.trim().slice(0, 120)
+          title: promptText.slice(0, 120)
         })
       });
       if (!chatResponse.ok) {
@@ -744,15 +828,23 @@ function App() {
         agentId: selectedRepo.agentId,
         repoId: selectedRepo.id,
         chatId: targetChatId,
-        prompt,
+        prompt: promptText,
         sandbox,
-        branchMode: "current"
+        branchMode: "current",
+        attachments: attachments.map((attachment) => ({
+          name: attachment.name,
+          mimeType: attachment.mimeType,
+          size: attachment.size,
+          dataBase64: attachment.dataBase64
+        }))
       })
     });
     setBusy(false);
     if (!response.ok) return;
     const { jobId } = await response.json();
     setPrompt("");
+    setAttachments([]);
+    setAttachmentNotice("");
     await loadChat(targetChatId, jobId);
   }
 
@@ -784,6 +876,39 @@ function App() {
       if (nextChats[0]) await loadChat(nextChats[0].id);
     }
     await loadChats(selectedRepo);
+  }
+
+  async function addFiles(files: FileList | File[]) {
+    const list = Array.from(files);
+    if (!list.length) return;
+    setAttachmentNotice("");
+    const currentSize = attachments.reduce((sum, item) => sum + item.size, 0);
+    const nextSize = list.reduce((sum, file) => sum + file.size, currentSize);
+    if (attachments.length + list.length > 8) {
+      setAttachmentNotice("Можно прикрепить до 8 файлов к одному сообщению.");
+      return;
+    }
+    if (list.some((file) => file.size > 5 * 1024 * 1024) || nextSize > 12 * 1024 * 1024) {
+      setAttachmentNotice("Файл до 5 MB, суммарно до 12 MB на сообщение.");
+      return;
+    }
+    try {
+      const parsed = await Promise.all(list.map(readFileAttachment));
+      setAttachments((current) => [...current, ...parsed]);
+    } catch {
+      setAttachmentNotice("Не получилось прочитать один из файлов.");
+    }
+  }
+
+  function removeAttachment(id: string) {
+    setAttachments((current) => current.filter((attachment) => attachment.id !== id));
+  }
+
+  function handleComposerPaste(event: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const files = Array.from(event.clipboardData.files).filter((file) => file.size > 0);
+    if (!files.length) return;
+    event.preventDefault();
+    addFiles(files);
   }
 
   async function cancelJob() {
@@ -1015,10 +1140,46 @@ function App() {
 
   function renderComposer() {
     if (!selectedRepo) return null;
+    const canSubmit = Boolean(prompt.trim() || attachments.length);
     return (
       <form className="composer" onSubmit={createJob}>
-        <textarea placeholder={activeChat ? `Напиши следующую задачу в чат "${activeChat.title}"...` : "Напиши первую задачу, чат создастся автоматически..."} value={prompt} onChange={(event) => setPrompt(event.target.value)} />
+        {attachments.length > 0 && (
+          <div className="attachment-list">
+            {attachments.map((attachment) => (
+              <div className="attachment-chip" key={attachment.id}>
+                {attachment.previewUrl ? <img alt="" className="attachment-thumb" src={attachment.previewUrl} /> : <Paperclip size={16} />}
+                <span>
+                  <strong>{attachment.name}</strong>
+                  <small>{attachment.mimeType} · {formatBytes(attachment.size)}</small>
+                </span>
+                <button aria-label={`Remove ${attachment.name}`} className="attachment-remove" type="button" onClick={() => removeAttachment(attachment.id)}>
+                  <X size={14} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        {attachmentNotice && <div className="notice danger">{attachmentNotice}</div>}
+        <textarea
+          placeholder={activeChat ? `Напиши следующую задачу в чат "${activeChat.title}"...` : "Напиши первую задачу, чат создастся автоматически..."}
+          value={prompt}
+          onChange={(event) => setPrompt(event.target.value)}
+          onPaste={handleComposerPaste}
+        />
         <div className="sticky-submit">
+          <input
+            className="file-input"
+            id="composer-attachment-input"
+            multiple
+            type="file"
+            onChange={(event) => {
+              if (event.currentTarget.files) addFiles(event.currentTarget.files);
+              event.currentTarget.value = "";
+            }}
+          />
+          <label className="attachment-picker" htmlFor="composer-attachment-input" title="Attach files">
+            <Paperclip size={18} />
+          </label>
           <div className="sandbox-control">
             <button
               aria-expanded={sandboxMenuOpen}
@@ -1051,7 +1212,7 @@ function App() {
               </div>
             )}
           </div>
-          <button className="run-button" disabled={busy || !prompt.trim()} type="submit"><Play size={18} /> Run Codex</button>
+          <button className="run-button" disabled={busy || !canSubmit} type="submit"><Play size={18} /> Run Codex</button>
           {activeJob && ["queued", "assigned", "running"].includes(activeJob.status) && (
             <button className="stop" type="button" onClick={cancelJob}><Square size={18} /> Stop</button>
           )}
@@ -1281,6 +1442,7 @@ function App() {
                             <small>{new Date(message.createdAt).toLocaleString()}</small>
                           </div>
                           {renderRichText(message.content, "rich-text message-body")}
+                          {renderMessageAttachments(message.attachments)}
                         </article>
                       )) : (
                         <div className="empty">Начни этот чат или дождись синхронизации истории из локального Codex/VS Code.</div>

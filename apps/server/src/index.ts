@@ -30,6 +30,7 @@ import {
   openDb,
   parseCodexUsage,
   type AgentRow,
+  type AttachmentRow,
   type ChatMessageRow,
   type ChatRow,
   type JobRow,
@@ -359,6 +360,8 @@ function chatRepoId(chatId: string): string {
 }
 
 function serializeMessage(message: ChatMessageRow) {
+  const attachments = db.prepare("SELECT * FROM job_attachments WHERE chat_message_id = ? ORDER BY created_at ASC")
+    .all(message.id) as AttachmentRow[];
   return {
     id: message.id,
     chatId: message.chat_id,
@@ -367,8 +370,50 @@ function serializeMessage(message: ChatMessageRow) {
     source: message.source,
     externalId: message.external_id,
     metadata: message.metadata_json ? JSON.parse(message.metadata_json) : undefined,
-    createdAt: message.created_at
+    createdAt: message.created_at,
+    attachments: attachments.map(serializeAttachment)
   };
+}
+
+function serializeAttachment(attachment: AttachmentRow) {
+  return {
+    id: attachment.id,
+    name: attachment.name,
+    mimeType: attachment.mime_type,
+    size: attachment.size,
+    dataBase64: isPreviewableImageMime(attachment.mime_type) ? attachment.data_base64 : undefined,
+    createdAt: attachment.created_at
+  };
+}
+
+function isPreviewableImageMime(mimeType: string): boolean {
+  return ["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/bmp"].includes(mimeType.toLowerCase());
+}
+
+function storeJobAttachments(
+  jobId: string,
+  messageId: string,
+  attachments: Array<{ name: string; mimeType: string; size: number; dataBase64: string }>,
+  createdAt: string
+): void {
+  const totalSize = attachments.reduce((sum, attachment) => sum + attachment.size, 0);
+  if (totalSize > 12 * 1024 * 1024) throw new Error("attachments_too_large");
+  const insert = db.prepare(`
+    INSERT INTO job_attachments (id,job_id,chat_message_id,name,mime_type,size,data_base64,created_at)
+    VALUES (?,?,?,?,?,?,?,?)
+  `);
+  for (const attachment of attachments) {
+    insert.run(
+      id("att"),
+      jobId,
+      messageId,
+      attachment.name,
+      attachment.mimeType,
+      attachment.size,
+      attachment.dataBase64,
+      createdAt
+    );
+  }
 }
 
 function upsertSyncedChat(agentId: string, sync: Extract<AgentToServer, { type: "chat.sync" }>): void {
@@ -460,7 +505,14 @@ function dispatchQueue(agentId: string): void {
       sandbox: job.sandbox,
       branchMode: job.branch_mode,
       kind: job.kind,
-      testCommandId: job.test_command_id ?? undefined
+      testCommandId: job.test_command_id ?? undefined,
+      attachments: (db.prepare("SELECT * FROM job_attachments WHERE job_id = ? ORDER BY created_at ASC").all(job.id) as AttachmentRow[])
+        .map((attachment) => ({
+          name: attachment.name,
+          mimeType: attachment.mime_type,
+          size: attachment.size,
+          dataBase64: attachment.data_base64
+        }))
     }
   });
 }
@@ -580,7 +632,7 @@ function agentSetupPayload(request: { protocol: string; hostname: string }, agen
 }
 
 async function createApp(): Promise<FastifyInstance> {
-  const app = Fastify({ logger: true, trustProxy: true });
+  const app = Fastify({ logger: true, trustProxy: true, bodyLimit: 20 * 1024 * 1024 });
   await app.register(fastifyCookie);
   await app.register(fastifyWebsocket);
 
@@ -988,6 +1040,8 @@ async function createApp(): Promise<FastifyInstance> {
     if (!repo) return reply.code(404).send({ error: "repo_not_found" });
     const allowed = JSON.parse(repo.allowed_sandboxes) as string[];
     if (!allowed.includes(parsed.data.sandbox)) return reply.code(400).send({ error: "sandbox_not_allowed" });
+    const attachmentTotal = parsed.data.attachments.reduce((sum, attachment) => sum + attachment.size, 0);
+    if (attachmentTotal > 12 * 1024 * 1024) return reply.code(400).send({ error: "attachments_too_large" });
     let chatId = parsed.data.chatId;
     if (chatId) {
       const chat = db.prepare("SELECT * FROM chats WHERE id = ? AND agent_id = ? AND repo_id = ?")
@@ -1002,11 +1056,13 @@ async function createApp(): Promise<FastifyInstance> {
     }
     const jobId = id("job");
     const createdAt = nowIso();
+    const promptMessageId = id("msg");
     db.prepare(`
       INSERT INTO jobs (id,chat_id,agent_id,repo_id,prompt,sandbox,branch_mode,kind,status,created_at)
       VALUES (?,?,?,?,?,?,?,?,?,?)
     `).run(jobId, chatId, parsed.data.agentId, parsed.data.repoId, parsed.data.prompt, parsed.data.sandbox, parsed.data.branchMode, "codex", "queued", createdAt);
     appendChatMessage({
+      id: promptMessageId,
       chat_id: chatId,
       role: "user",
       content: parsed.data.prompt,
@@ -1015,6 +1071,7 @@ async function createApp(): Promise<FastifyInstance> {
       metadata_json: JSON.stringify({ jobId }),
       created_at: createdAt
     });
+    storeJobAttachments(jobId, promptMessageId, parsed.data.attachments, createdAt);
     db.prepare("UPDATE chats SET updated_at = ? WHERE id = ?").run(createdAt, chatId);
     broadcast({ type: "chats.updated", agentId: parsed.data.agentId, repoId: parsed.data.repoId });
     broadcast({ type: "job.created", jobId });
