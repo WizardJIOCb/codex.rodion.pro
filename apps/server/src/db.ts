@@ -268,7 +268,6 @@ export function openDb(path: string): DatabaseSync {
     CREATE INDEX IF NOT EXISTS idx_attachments_job ON job_attachments(job_id);
     CREATE INDEX IF NOT EXISTS idx_attachments_message ON job_attachments(chat_message_id);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_external ON chat_messages(chat_id, source, external_id) WHERE external_id IS NOT NULL;
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_users_nickname ON users(nickname) WHERE nickname IS NOT NULL AND nickname != '';
   `);
   const userColumns = db.prepare("PRAGMA table_info(users)").all() as Array<{ name: string }>;
   if (!userColumns.some((column) => column.name === "role")) {
@@ -286,6 +285,7 @@ export function openDb(path: string): DatabaseSync {
   if (!userColumns.some((column) => column.name === "updated_at")) {
     db.exec("ALTER TABLE users ADD COLUMN updated_at TEXT");
   }
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_nickname ON users(nickname) WHERE nickname IS NOT NULL AND nickname != ''");
   const firstUser = db.prepare("SELECT id FROM users ORDER BY created_at ASC LIMIT 1").get() as { id: string } | undefined;
   const adminUser = db.prepare("SELECT id FROM users WHERE role = 'admin' LIMIT 1").get() as { id: string } | undefined;
   if (firstUser && !adminUser) {
