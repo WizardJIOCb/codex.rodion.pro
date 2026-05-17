@@ -1843,6 +1843,7 @@ async function createApp(): Promise<FastifyInstance> {
     });
     app.setNotFoundHandler((request, reply) => {
       if (request.raw.url?.startsWith("/api/")) return reply.code(404).send({ error: "not_found" });
+      if (request.raw.url?.startsWith("/assets/")) return reply.code(404).send("Not found");
       return reply.sendFile("index.html");
     });
   } else {

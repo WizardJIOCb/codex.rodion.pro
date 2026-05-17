@@ -259,7 +259,10 @@ function api(path: string, options: RequestInit = {}) {
       "Content-Type": "application/json",
       ...(options.headers ?? {})
     }
-  });
+  }).catch(() => new Response(JSON.stringify({ error: "network_error" }), {
+    status: 503,
+    headers: { "Content-Type": "application/json" }
+  }));
 }
 
 function defaultProjectPath(name: string) {
@@ -702,6 +705,9 @@ function App() {
   const activeChatIdRef = useRef(activeChatId);
   const activeJobIdRef = useRef(activeJob?.id ?? "");
   const selectedRepoRef = useRef<Repo | undefined>(selectedRepo);
+  const loadChatsTimerRef = useRef<number | undefined>(undefined);
+  const loadChatTimerRef = useRef<number | undefined>(undefined);
+  const loadJobTimerRef = useRef<number | undefined>(undefined);
   activeChatIdRef.current = activeChatId;
   activeJobIdRef.current = activeJob?.id ?? "";
   selectedRepoRef.current = selectedRepo;
@@ -802,6 +808,27 @@ function App() {
     const data = await response.json();
     setActiveJob(data.job);
     setLogs(data.logs);
+  }
+
+  function scheduleLoadChats(repo: Repo) {
+    if (loadChatsTimerRef.current) window.clearTimeout(loadChatsTimerRef.current);
+    loadChatsTimerRef.current = window.setTimeout(() => {
+      loadChats(repo).catch(() => undefined);
+    }, 250);
+  }
+
+  function scheduleLoadChat(chatId: string) {
+    if (loadChatTimerRef.current) window.clearTimeout(loadChatTimerRef.current);
+    loadChatTimerRef.current = window.setTimeout(() => {
+      loadChat(chatId).catch(() => undefined);
+    }, 250);
+  }
+
+  function scheduleLoadJob(jobId: string) {
+    if (loadJobTimerRef.current) window.clearTimeout(loadJobTimerRef.current);
+    loadJobTimerRef.current = window.setTimeout(() => {
+      loadJob(jobId).catch(() => undefined);
+    }, 250);
   }
 
   async function openJob(job: Job) {
@@ -998,13 +1025,13 @@ function App() {
         }
         if (message.type === "chats.updated") {
           const repo = selectedRepoRef.current;
-          if (repo && message.agentId === repo.agentId && message.repoId === repo.id) loadChats(repo);
-          if (activeChatIdRef.current) loadChat(activeChatIdRef.current);
+          if (repo && message.agentId === repo.agentId && message.repoId === repo.id) scheduleLoadChats(repo);
+          if (activeChatIdRef.current) scheduleLoadChat(activeChatIdRef.current);
           return;
         }
         if (message.type === "job.created" || message.type === "job.updated") {
-          if (message.jobId && activeJobIdRef.current === message.jobId) loadJob(message.jobId);
-          if (activeChatIdRef.current) loadChat(activeChatIdRef.current);
+          if (message.jobId && activeJobIdRef.current === message.jobId) scheduleLoadJob(message.jobId);
+          if (activeChatIdRef.current) scheduleLoadChat(activeChatIdRef.current);
         }
       };
       ws.onclose = () => {
@@ -1016,6 +1043,9 @@ function App() {
     return () => {
       closed = true;
       if (reconnectTimer) window.clearTimeout(reconnectTimer);
+      if (loadChatsTimerRef.current) window.clearTimeout(loadChatsTimerRef.current);
+      if (loadChatTimerRef.current) window.clearTimeout(loadChatTimerRef.current);
+      if (loadJobTimerRef.current) window.clearTimeout(loadJobTimerRef.current);
       ws?.close();
     };
   }, [csrf]);
@@ -1030,7 +1060,7 @@ function App() {
       const detectedAt = localActivity?.busySinceAt || localActivity?.updatedAt || localActivity?.detectedAt || new Date(now).toISOString();
       setLocalBusyHold((current) => ({
         until: now + 7000,
-        since: current.until > now ? current.since ?? detectedAt : detectedAt
+        since: current.since ?? detectedAt
       }));
       return;
     }
