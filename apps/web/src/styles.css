@@ -573,6 +573,7 @@ textarea:focus {
 
 .composer {
   padding: 12px;
+  overflow: visible;
 }
 
 .segments {
@@ -625,14 +626,74 @@ textarea:focus {
   position: sticky;
   bottom: max(8px, env(safe-area-inset-bottom));
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 6px;
+  align-items: center;
+  overflow: visible;
 }
 
 .sticky-submit .stop {
   min-width: 104px;
   color: #ffffff;
   background: var(--danger);
+}
+
+.sandbox-control {
+  position: relative;
+  min-width: 0;
+}
+
+.sticky-submit .sandbox-trigger {
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+  min-height: 40px;
+  padding: 0;
+  border-radius: 999px;
+  color: var(--text);
+  background: #ffffff;
+  border: 1px solid var(--line);
+}
+
+.sticky-submit .sandbox-trigger:hover,
+.sticky-submit .sandbox-trigger[aria-expanded="true"] {
+  border-color: var(--line-strong);
+  background: var(--panel-2);
+}
+
+.sandbox-menu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  z-index: 20;
+  width: 210px;
+  display: grid;
+  gap: 3px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: var(--shadow);
+}
+
+.sticky-submit .sandbox-menu button {
+  width: 100%;
+  min-height: 34px;
+  justify-content: space-between;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  padding: 7px 9px;
+}
+
+.sticky-submit .sandbox-menu button:hover,
+.sticky-submit .sandbox-menu button.selected {
+  background: var(--panel-2);
+}
+
+.sticky-submit .run-button {
+  width: 100%;
 }
 
 .workspace {
@@ -1190,7 +1251,11 @@ button:disabled {
   }
 
   .sticky-submit {
-    grid-template-columns: 1fr;
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .sticky-submit .stop {
+    grid-column: 1 / -1;
   }
 
   .progress-panel {

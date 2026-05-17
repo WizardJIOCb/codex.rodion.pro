@@ -4,6 +4,7 @@ import {
   Activity,
   ArrowLeft,
   Bot,
+  Check,
   CheckCircle2,
   FolderGit2,
   GitBranch,
@@ -14,6 +15,7 @@ import {
   RefreshCw,
   Save,
   Settings,
+  ShieldCheck,
   Square,
   Trash2,
   UploadCloud,
@@ -387,6 +389,7 @@ function App() {
   const [projectDeployRemoteSubdir, setProjectDeployRemoteSubdir] = useState("");
   const [projectDeployBuildCommand, setProjectDeployBuildCommand] = useState("npm.cmd run build");
   const [projectDeployCleanRemote, setProjectDeployCleanRemote] = useState(true);
+  const [sandboxMenuOpen, setSandboxMenuOpen] = useState(false);
   const [originalProjectPath, setOriginalProjectPath] = useState("");
   const [chatTitle, setChatTitle] = useState("");
   const [gitMessage, setGitMessage] = useState("Update project");
@@ -834,14 +837,41 @@ function App() {
     if (!selectedRepo) return null;
     return (
       <form className="composer" onSubmit={createJob}>
-        <div className="segments">
-          {selectedRepo.allowedSandboxes.map((item) => (
-            <button className={sandbox === item ? "active" : ""} key={item} type="button" onClick={() => setSandbox(item)}>{SANDBOX_LABELS[item]}</button>
-          ))}
-        </div>
         <textarea placeholder={activeChat ? `Напиши следующую задачу в чат "${activeChat.title}"...` : "Напиши первую задачу, чат создастся автоматически..."} value={prompt} onChange={(event) => setPrompt(event.target.value)} />
         <div className="sticky-submit">
-          <button disabled={busy || !prompt.trim()} type="submit"><Play size={18} /> Run Codex</button>
+          <div className="sandbox-control">
+            <button
+              aria-expanded={sandboxMenuOpen}
+              aria-label={`Sandbox mode: ${SANDBOX_LABELS[sandbox]}`}
+              className="sandbox-trigger"
+              title={`Sandbox mode: ${SANDBOX_LABELS[sandbox]}`}
+              type="button"
+              onClick={() => setSandboxMenuOpen((value) => !value)}
+            >
+              <ShieldCheck size={18} />
+            </button>
+            {sandboxMenuOpen && (
+              <div className="sandbox-menu" role="menu">
+                {selectedRepo.allowedSandboxes.map((item) => (
+                  <button
+                    className={sandbox === item ? "selected" : ""}
+                    key={item}
+                    role="menuitemcheckbox"
+                    aria-checked={sandbox === item}
+                    type="button"
+                    onClick={() => {
+                      setSandbox(item);
+                      setSandboxMenuOpen(false);
+                    }}
+                  >
+                    <span>{SANDBOX_LABELS[item]}</span>
+                    {sandbox === item && <Check size={16} />}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <button className="run-button" disabled={busy || !prompt.trim()} type="submit"><Play size={18} /> Run Codex</button>
           {activeJob && ["queued", "assigned", "running"].includes(activeJob.status) && (
             <button className="stop" type="button" onClick={cancelJob}><Square size={18} /> Stop</button>
           )}
@@ -1118,9 +1148,7 @@ function App() {
                           <pre>{activeJob.gitDiff || "No diff yet."}</pre>
                         </div>
                       </>
-                    ) : (
-                      <div className="empty">Запусти первую задачу в этом чате.</div>
-                    )}
+                    ) : null}
                   </section>
                 </section>
               </>
