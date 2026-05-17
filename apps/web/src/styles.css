@@ -1510,6 +1510,7 @@ h2 {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+  margin-bottom: 4px;
 }
 
 .command-meta span {
