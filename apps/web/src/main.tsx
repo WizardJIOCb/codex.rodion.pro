@@ -9,6 +9,7 @@ import {
   Camera,
   Check,
   CheckCircle2,
+  ChevronDown,
   Clock3,
   FolderGit2,
   Github,
@@ -27,6 +28,7 @@ import {
   Settings,
   ShieldCheck,
   Square,
+  Terminal,
   UploadCloud,
   UserCircle,
   Wrench,
@@ -253,6 +255,22 @@ type JobProgress = {
   at: string;
 };
 
+type DiffRow = {
+  file: string;
+  changed: number;
+  bars: string;
+  added: number;
+  deleted: number;
+};
+
+type CodexAction = {
+  id: string;
+  command: string;
+  status: string;
+  output: string;
+  at: string;
+};
+
 function api(path: string, options: RequestInit = {}) {
   return fetch(path, {
     ...options,
@@ -342,42 +360,44 @@ function readFileAttachment(file: File): Promise<PendingAttachment> {
   });
 }
 
-function diffRows(stat: string | null) {
-  if (!stat) return [];
-  return stat
+function progressDiffRows(files: JobProgress["files"] | undefined): DiffRow[] {
+  return (files ?? []).map((file) => ({
+    file: file.path,
+    changed: file.added + file.deleted,
+    bars: "",
+    added: file.added,
+    deleted: file.deleted
+  }));
+}
+
+function diffRows(stat: string | null, fallbackFiles?: JobProgress["files"], limit = 8): DiffRow[] {
+  const fallbackRows = progressDiffRows(fallbackFiles);
+  if (!stat) return fallbackRows;
+  const rows = stat
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean)
     .map((line) => {
       const match = line.match(/^(.*?)\s+\|\s+(\d+)\s+([+\-]+)?/);
+      const bars = match?.[3] ?? "";
       return {
         file: match?.[1]?.trim() || line,
         changed: Number(match?.[2] ?? 0),
-        bars: match?.[3] ?? ""
+        bars,
+        added: [...bars].filter((char) => char === "+").length,
+        deleted: [...bars].filter((char) => char === "-").length
       };
-    })
-    .slice(0, 8);
+    });
+  const allRows = rows.length ? rows : fallbackRows;
+  return limit === Number.POSITIVE_INFINITY ? allRows : allRows.slice(0, limit);
 }
 
-function diffSummary(stat: string | null, fallback?: { filesChanged?: number; added?: number; deleted?: number } | null) {
-  const rows = stat
-    ? stat
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line) => {
-        const match = line.match(/^(.*?)\s+\|\s+(\d+)\s+([+\-]+)?/);
-        return {
-          file: match?.[1]?.trim() || line,
-          changed: Number(match?.[2] ?? 0),
-          bars: match?.[3] ?? ""
-        };
-      })
-    : [];
+function diffSummary(stat: string | null, fallback?: { filesChanged?: number; added?: number; deleted?: number; files?: JobProgress["files"] } | null) {
+  const rows = diffRows(stat, fallback?.files, Number.POSITIVE_INFINITY);
   const fromRows = rows.reduce((total, row) => ({
     files: total.files + 1,
-    added: total.added + [...row.bars].filter((char) => char === "+").length,
-    deleted: total.deleted + [...row.bars].filter((char) => char === "-").length
+    added: total.added + row.added,
+    deleted: total.deleted + row.deleted
   }), { files: 0, added: 0, deleted: 0 });
   return {
     files: Math.max(fromRows.files, fallback?.filesChanged || 0),
@@ -391,6 +411,11 @@ function jobDurationSeconds(job: Job) {
   const finish = Date.parse(job.finishedAt || new Date().toISOString());
   if (!Number.isFinite(start) || !Number.isFinite(finish)) return 0;
   return Math.max(0, Math.floor((finish - start) / 1000));
+}
+
+function formatDiffRowMeta(row: DiffRow) {
+  if (row.added || row.deleted) return `+${row.added} -${row.deleted}`;
+  return `${row.changed}${row.bars ? ` ${row.bars}` : ""}`;
 }
 
 function normalizeDisplayText(value: string) {
@@ -600,6 +625,33 @@ function displayLogMessage(log: Log) {
   }
 }
 
+function codexActionEntries(logs: Log[]): CodexAction[] {
+  const byId = new Map<string, CodexAction>();
+  logs.forEach((log, index) => {
+    const rawText = log.message.trim();
+    if (!rawText.startsWith("{")) return;
+    try {
+      const event = JSON.parse(rawText) as Record<string, unknown>;
+      const item = event.item && typeof event.item === "object" ? event.item as Record<string, unknown> : undefined;
+      if (item?.type !== "command_execution") return;
+      const id = typeof item.id === "string" ? item.id : `${log.at}:${index}`;
+      const current = byId.get(id);
+      const command = summarizeDisplayCommand(String(item.command ?? current?.command ?? "command"));
+      const output = typeof item.aggregated_output === "string" ? normalizeDisplayText(item.aggregated_output).trim() : current?.output ?? "";
+      byId.set(id, {
+        id,
+        command,
+        output,
+        status: String(item.status ?? current?.status ?? (event.type === "item.started" ? "running" : "completed")),
+        at: log.at
+      });
+    } catch {
+      // Non-JSON lines are rendered in the raw log panel instead.
+    }
+  });
+  return [...byId.values()];
+}
+
 function renderLogs(logs: Log[]) {
   const visibleLogs = logs
     .map((line) => ({ ...line, display: displayLogMessage(line) }))
@@ -708,9 +760,16 @@ function App() {
   const selectedAgent = agents.find((agent) => agent.status === "online") ?? agents[0];
   const online = agents.some((agent) => agent.status === "online");
   const localActivity = selectedAgent?.localActivity;
-  const rawLocalCodexBusy = localActivity?.status === "busy" || Boolean(selectedAgent?.current_job_id);
+  const activeJobFinalMessageSeen = Boolean(activeJob && messages.some((message) => (
+    message.role === "assistant"
+    && messageJobId(message) === activeJob.id
+    && (message.externalId === `job:${activeJob.id}:final` || typeof message.metadata?.status === "string")
+  )));
+  const activeRunBusy = Boolean(activeJob && ["queued", "assigned", "running"].includes(activeJob.status) && !activeJobFinalMessageSeen);
+  const staleCurrentWebJob = Boolean(selectedAgent?.current_job_id && selectedAgent.current_job_id === activeJob?.id && !activeRunBusy);
+  const staleLocalWebBusy = Boolean(localActivity?.source === "codex.rodion.pro" && !activeRunBusy && activeJob?.finishedAt);
+  const rawLocalCodexBusy = Boolean((localActivity?.status === "busy" || selectedAgent?.current_job_id) && !staleCurrentWebJob && !staleLocalWebBusy);
   const localCodexBusy = rawLocalCodexBusy || localBusyHold.until > nowTick;
-  const activeRunBusy = Boolean(activeJob && ["queued", "assigned", "running"].includes(activeJob.status));
   const localBusySince = rawLocalCodexBusy
     ? localActivity?.busySinceAt || localBusyHold.since || localActivity?.updatedAt || localActivity?.detectedAt
     : localBusyHold.since;
@@ -1810,7 +1869,7 @@ function App() {
   function renderJobCompletion(job: Job, progress: JobProgress | null) {
     if (!job.finishedAt || ["queued", "assigned", "running"].includes(job.status)) return null;
     const summary = diffSummary(job.gitDiffStat, progress);
-    const rows = diffRows(job.gitDiffStat);
+    const rows = diffRows(job.gitDiffStat, progress?.files);
     return (
       <div className="completion-card">
         <div className="completion-head">
@@ -1827,7 +1886,7 @@ function App() {
             {rows.map((row) => (
               <div key={row.file}>
                 <span>{row.file}</span>
-                <small>{row.changed} {row.bars}</small>
+                <small>{formatDiffRowMeta(row)}</small>
               </div>
             ))}
           </div>
@@ -1838,10 +1897,11 @@ function App() {
     );
   }
 
-  function renderCodexChangeCard(message: ChatMessage) {
-    if (message.role !== "assistant" || typeof message.metadata?.gitDiffStat !== "string" || !message.metadata.gitDiffStat) return null;
-    const rows = diffRows(String(message.metadata.gitDiffStat));
-    const summary = diffSummary(String(message.metadata.gitDiffStat));
+  function renderCodexChangeCard(message: ChatMessage, job?: Job, progress?: JobProgress | null) {
+    const stat = job?.gitDiffStat || (typeof message.metadata?.gitDiffStat === "string" ? message.metadata.gitDiffStat : "");
+    if (message.role !== "assistant" || (!stat && !progress?.files?.length)) return null;
+    const rows = diffRows(stat || null, progress?.files);
+    const summary = diffSummary(stat || null, progress);
     const actionKey = `changes:${message.id}`;
     const expanded = Boolean(expandedActions[actionKey]);
     const visibleRows = expanded ? rows : rows.slice(0, 3);
@@ -1853,7 +1913,11 @@ function App() {
             <span className="change-icon"><Wrench size={16} /></span>
             <div>
               <strong>Edited {summary.files} files</strong>
-              <small><span>+{summary.added}</span><span>-{summary.deleted}</span></small>
+              <small>
+                {job?.finishedAt && <span className="duration">Worked for {formatDuration(jobDurationSeconds(job))}</span>}
+                <span className="added">+{summary.added}</span>
+                <span className="deleted">-{summary.deleted}</span>
+              </small>
             </div>
           </div>
           <button type="button" onClick={() => setExpandedActions((current) => ({ ...current, [actionKey]: !current[actionKey] }))}>
@@ -1865,7 +1929,7 @@ function App() {
             {visibleRows.map((row) => (
               <div key={row.file}>
                 <span>{row.file}</span>
-                <small>{row.changed} {row.bars}</small>
+                <small>{formatDiffRowMeta(row)}</small>
               </div>
             ))}
           </div>
@@ -1880,6 +1944,37 @@ function App() {
           >
             Show {hiddenCount} more files
           </button>
+        )}
+      </div>
+    );
+  }
+
+  function renderCodexActions(message: ChatMessage, job?: Job) {
+    const jobId = messageJobId(message);
+    if (!job || job.id !== activeJob?.id || jobId !== activeJob.id) return null;
+    const actions = codexActionEntries(logs);
+    if (!actions.length) return null;
+    const actionKey = `actions:${message.id}`;
+    const expanded = Boolean(expandedActions[actionKey]);
+    return (
+      <div className="message-actions run-actions">
+        <button type="button" onClick={() => setExpandedActions((current) => ({ ...current, [actionKey]: !current[actionKey] }))}>
+          <Terminal size={15} />
+          <span>Ran {actions.length} commands</span>
+          <ChevronDown className={expanded ? "open" : ""} size={15} />
+        </button>
+        {expanded && (
+          <div className="message-action-details command-details">
+            {actions.map((action) => (
+              <details key={action.id}>
+                <summary>
+                  <span>{action.command}</span>
+                  <small>{action.status}</small>
+                </summary>
+                {action.output ? <pre>{action.output}</pre> : <small>No output.</small>}
+              </details>
+            ))}
+          </div>
         )}
       </div>
     );
@@ -2344,23 +2439,29 @@ function App() {
                 <section className="workspace">
                   <section className="job-detail">
                     <section className="chat-thread">
-                      {messages.length ? messages.map((message) => (
-                        <article className={`message ${message.role}`} key={message.id}>
-                          <div className="message-meta">
-                            <span>{message.role === "user" ? "You" : message.source === "vscode" ? "VS Code" : "Codex"}</span>
-                            <small>{new Date(message.createdAt).toLocaleString()}</small>
-                          </div>
-                          {renderRichText(message.content, "rich-text message-body")}
-                          {renderMessageAttachments(message.attachments, setImagePreview)}
-                          {messageJobId(message) === activeJob?.id && activeRunBusy && (
-                            <div className="message-thinking">
-                              <RefreshCw className="spin" size={14} />
-                              <span>Codex думает {formatDuration(thinkingSeconds)}</span>
+                      {messages.length ? messages.map((message) => {
+                        const jobId = messageJobId(message);
+                        const messageJob = jobs.find((job) => job.id === jobId);
+                        const messageProgress = jobId ? progressByJob[jobId] ?? null : null;
+                        return (
+                          <article className={`message ${message.role}`} key={message.id}>
+                            <div className="message-meta">
+                              <span>{message.role === "user" ? "You" : message.source === "vscode" ? "VS Code" : "Codex"}</span>
+                              <small>{new Date(message.createdAt).toLocaleString()}</small>
                             </div>
-                          )}
-                          {renderCodexChangeCard(message)}
-                        </article>
-                      )) : (
+                            {renderRichText(message.content, "rich-text message-body")}
+                            {renderMessageAttachments(message.attachments, setImagePreview)}
+                            {jobId === activeJob?.id && activeRunBusy && (
+                              <div className="message-thinking">
+                                <RefreshCw className="spin" size={14} />
+                                <span>Codex думает {formatDuration(thinkingSeconds)}</span>
+                              </div>
+                            )}
+                            {renderCodexActions(message, messageJob)}
+                            {renderCodexChangeCard(message, messageJob, messageProgress)}
+                          </article>
+                        );
+                      }) : (
                         <div className="empty">Начни этот чат или дождись синхронизации истории из локального Codex/VS Code.</div>
                       )}
                     </section>
@@ -2418,13 +2519,13 @@ function App() {
                         {activeJob.gitDiffStat && (
                           <div className="edited-card">
                             <div className="edited-head">
-                              <strong>Edited {diffRows(activeJob.gitDiffStat).length || activeProgress?.filesChanged || 0} files</strong>
+                              <strong>Edited {diffRows(activeJob.gitDiffStat, activeProgress?.files).length || activeProgress?.filesChanged || 0} files</strong>
                               <span>+{activeProgress?.added ?? 0} -{activeProgress?.deleted ?? 0}</span>
                             </div>
-                            {diffRows(activeJob.gitDiffStat).map((row) => (
+                            {diffRows(activeJob.gitDiffStat, activeProgress?.files).map((row) => (
                               <div className="edited-row" key={row.file}>
                                 <span>{row.file}</span>
-                                <small>{row.changed} {row.bars}</small>
+                                <small>{formatDiffRowMeta(row)}</small>
                               </div>
                             ))}
                           </div>

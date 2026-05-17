@@ -1408,6 +1408,45 @@ h2 {
   white-space: nowrap;
 }
 
+.run-actions .open {
+  transform: rotate(180deg);
+}
+
+.command-details {
+  gap: 6px;
+}
+
+.command-details details {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  padding: 7px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #ffffff;
+}
+
+.command-details summary {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  cursor: pointer;
+  color: var(--text);
+  font-weight: 800;
+}
+
+.command-details pre {
+  max-height: 260px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #f8f8f5;
+  font-size: 12px;
+}
+
 .rich-text {
   display: grid;
   gap: 8px;
@@ -1520,11 +1559,15 @@ h2 {
   font-weight: 800;
 }
 
-.codex-change-title small span:first-child {
+.codex-change-title small .duration {
+  color: var(--muted);
+}
+
+.codex-change-title small .added {
   color: var(--accent-2);
 }
 
-.codex-change-title small span:last-child {
+.codex-change-title small .deleted {
   color: var(--danger);
 }
 
