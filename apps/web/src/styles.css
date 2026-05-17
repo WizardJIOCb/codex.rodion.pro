@@ -1723,15 +1723,15 @@ h2 {
   white-space: nowrap;
 }
 
-.diff-added {
+.diff-meta .diff-added {
   color: var(--accent-2);
 }
 
-.diff-deleted {
+.diff-meta .diff-deleted {
   color: var(--danger);
 }
 
-.diff-neutral {
+.diff-meta .diff-neutral {
   color: var(--muted);
 }
 
