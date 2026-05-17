@@ -1799,6 +1799,53 @@ function App() {
     );
   }
 
+  function renderCodexChangeCard(message: ChatMessage) {
+    if (message.role !== "assistant" || typeof message.metadata?.gitDiffStat !== "string" || !message.metadata.gitDiffStat) return null;
+    const rows = diffRows(String(message.metadata.gitDiffStat));
+    const summary = diffSummary(String(message.metadata.gitDiffStat));
+    const actionKey = `changes:${message.id}`;
+    const expanded = Boolean(expandedActions[actionKey]);
+    const visibleRows = expanded ? rows : rows.slice(0, 3);
+    const hiddenCount = Math.max(0, rows.length - visibleRows.length);
+    return (
+      <div className="codex-change-card">
+        <div className="codex-change-head">
+          <div className="codex-change-title">
+            <span className="change-icon"><Wrench size={16} /></span>
+            <div>
+              <strong>Edited {summary.files} files</strong>
+              <small><span>+{summary.added}</span><span>-{summary.deleted}</span></small>
+            </div>
+          </div>
+          <button type="button" onClick={() => setExpandedActions((current) => ({ ...current, [actionKey]: !current[actionKey] }))}>
+            Review
+          </button>
+        </div>
+        {visibleRows.length ? (
+          <div className="codex-change-files">
+            {visibleRows.map((row) => (
+              <div key={row.file}>
+                <span>{row.file}</span>
+                <small>{row.changed} {row.bars}</small>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="codex-change-empty">No files changed.</div>
+        )}
+        {hiddenCount > 0 && (
+          <button
+            className="show-more-files"
+            type="button"
+            onClick={() => setExpandedActions((current) => ({ ...current, [actionKey]: true }))}
+          >
+            Show {hiddenCount} more files
+          </button>
+        )}
+      </div>
+    );
+  }
+
   function renderComposer() {
     if (!selectedRepo) return null;
     const canSubmit = Boolean(prompt.trim() || attachments.length);
@@ -2272,24 +2319,7 @@ function App() {
                               <span>Codex думает {formatDuration(thinkingSeconds)}</span>
                             </div>
                           )}
-                          {message.role === "assistant" && typeof message.metadata?.gitDiffStat === "string" && message.metadata.gitDiffStat && (
-                            <div className="message-actions">
-                              <button type="button" onClick={() => setExpandedActions((current) => ({ ...current, [message.id]: !current[message.id] }))}>
-                                <Wrench size={15} />
-                                <span>Edited {diffRows(String(message.metadata?.gitDiffStat)).length} files</span>
-                              </button>
-                              {expandedActions[message.id] && (
-                                <div className="message-action-details">
-                                  {diffRows(String(message.metadata.gitDiffStat)).map((row) => (
-                                    <div key={row.file}>
-                                      <span>{row.file}</span>
-                                      <small>{row.changed} {row.bars}</small>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          )}
+                          {renderCodexChangeCard(message)}
                         </article>
                       )) : (
                         <div className="empty">Начни этот чат или дождись синхронизации истории из локального Codex/VS Code.</div>
