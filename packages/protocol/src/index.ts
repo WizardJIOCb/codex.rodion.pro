@@ -205,6 +205,7 @@ export const ServerJobRunSchema = z.object({
     id: z.string().min(1),
     repoId: z.string().min(1),
     chatId: z.string().optional(),
+    codexThreadId: z.string().optional(),
     prompt: z.string().min(1),
     sandbox: SandboxSchema,
     branchMode: z.enum(["current", "create-per-job"]).default("current"),

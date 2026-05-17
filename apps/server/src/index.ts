@@ -552,6 +552,19 @@ function tombstoneDeletedChat(chat: ChatRow, jobRows: Array<{ id: string; codex_
   }
 }
 
+function latestCodexThreadIdForChat(chatId: string | null, currentJobId: string): string | undefined {
+  if (!chatId) return undefined;
+  const chat = db.prepare("SELECT source, external_id FROM chats WHERE id = ?").get(chatId) as Pick<ChatRow, "source" | "external_id"> | undefined;
+  if (chat?.source === "codex" && chat.external_id) return chat.external_id;
+  const row = db.prepare(`
+    SELECT codex_thread_id FROM jobs
+    WHERE chat_id = ? AND id != ? AND codex_thread_id IS NOT NULL AND codex_thread_id != ''
+    ORDER BY COALESCE(finished_at, started_at, created_at) DESC
+    LIMIT 1
+  `).get(chatId, currentJobId) as { codex_thread_id: string } | undefined;
+  return row?.codex_thread_id;
+}
+
 function dispatchQueue(agentId: string): void {
   const agent = agents.get(agentId);
   if (!agent) return;
@@ -571,6 +584,7 @@ function dispatchQueue(agentId: string): void {
       id: job.id,
       repoId: job.repo_id,
       chatId: job.chat_id ?? undefined,
+      codexThreadId: latestCodexThreadIdForChat(job.chat_id, job.id),
       prompt: job.prompt,
       sandbox: job.sandbox,
       branchMode: job.branch_mode,

@@ -10,6 +10,7 @@ type RunContext = {
   job: {
     id: string;
     repoId: string;
+    codexThreadId?: string;
     prompt: string;
     sandbox: "read-only" | "workspace-write" | "danger-full-access";
     branchMode: "current" | "create-per-job";
@@ -92,18 +93,30 @@ export class Runner {
         "Use these file paths as the attached user-provided context."
       ].join("\n")
       : context.job.prompt;
-    const args = [
-      ...codexCommand.prefixArgs,
-      "exec",
-      "-C",
-      repo.path,
-      "--sandbox",
-      context.job.sandbox,
-      "--json",
-      "-c",
-      "approval_policy=\"never\"",
-      "-"
-    ];
+    const args = context.job.codexThreadId
+      ? [
+        ...codexCommand.prefixArgs,
+        "exec",
+        "resume",
+        "--all",
+        "--json",
+        "-c",
+        "approval_policy=\"never\"",
+        context.job.codexThreadId,
+        "-"
+      ]
+      : [
+        ...codexCommand.prefixArgs,
+        "exec",
+        "-C",
+        repo.path,
+        "--sandbox",
+        context.job.sandbox,
+        "--json",
+        "-c",
+        "approval_policy=\"never\"",
+        "-"
+      ];
     return this.spawnAndCollect(context, repo, codexCommand.command, args, context.config.maxJobDurationMs, prompt);
   }
 
