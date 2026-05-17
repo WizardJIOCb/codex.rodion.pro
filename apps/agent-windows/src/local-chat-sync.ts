@@ -113,6 +113,7 @@ function readCodexRollout(path: string): ChatMessage[] {
   const lines = readFileSync(path, "utf8").split(/\r?\n/).filter(Boolean);
   const messages: ChatMessage[] = [];
   let lastChangeStat = "";
+  let lastChangeDiff = "";
   const actionsById = new Map<string, SyncedCodexAction>();
   let pendingActions: SyncedCodexAction[] = [];
   let currentRunStartedAt = "";
@@ -152,6 +153,8 @@ function readCodexRollout(path: string): ChatMessage[] {
       }
       const changeStat = extractChangeStat(row.payload.output);
       if (changeStat) lastChangeStat = changeStat;
+      const changeDiff = extractChangeDiff(row.payload.output);
+      if (changeDiff) lastChangeDiff = changeDiff;
     }
     if (row.type === "response_item" && row.payload?.type === "message") {
       const role = normalizeRole(row.payload.role);
@@ -185,6 +188,9 @@ function readCodexRollout(path: string): ChatMessage[] {
   const lastAssistant = [...compacted].reverse().find((message) => message.role === "assistant");
   if (lastAssistant && lastChangeStat && typeof lastAssistant.metadata?.gitDiffStat !== "string") {
     lastAssistant.metadata = { ...lastAssistant.metadata, gitDiffStat: lastChangeStat };
+  }
+  if (lastAssistant && lastChangeDiff && typeof lastAssistant.metadata?.gitDiff !== "string") {
+    lastAssistant.metadata = { ...lastAssistant.metadata, gitDiff: lastChangeDiff };
   }
   return compacted;
 }
@@ -237,6 +243,14 @@ function extractChangeStat(output: unknown): string {
     .filter((line) => /^\s*\S.*\s+\|\s+\d+/.test(line) || /^\s*\d+\s+files?\s+changed\b/i.test(line));
   if (statLines.length) return statLines.join("\n").slice(0, 12000);
   return "";
+}
+
+function extractChangeDiff(output: unknown): string {
+  if (typeof output !== "string" || !/^diff --git /m.test(output)) return "";
+  const normalized = output.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const start = normalized.search(/^diff --git /m);
+  if (start < 0) return "";
+  return normalized.slice(start).slice(0, 100000);
 }
 
 function diffStatFromPatch(output: string): string[] {

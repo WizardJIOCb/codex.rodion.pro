@@ -1689,21 +1689,44 @@ h2 {
   border-top: 1px solid var(--line);
 }
 
-.codex-change-files div {
+.codex-change-file {
+  display: grid;
+  min-width: 0;
+  background: #ffffff;
+}
+
+.codex-change-file + .codex-change-file {
+  border-top: 1px solid var(--line);
+}
+
+.codex-change-file-row {
   min-width: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
   align-items: center;
+  width: 100%;
   padding: 9px 11px;
+  border: 0;
+  color: var(--text);
   background: #ffffff;
+  font: inherit;
+  text-align: left;
 }
 
-.codex-change-files div + div {
-  border-top: 1px solid var(--line);
+.codex-change-file-row:not(:disabled) {
+  cursor: pointer;
 }
 
-.codex-change-files span {
+.codex-change-file-row:not(:disabled):hover {
+  background: #f8f8f5;
+}
+
+.codex-change-file-row:disabled {
+  cursor: default;
+}
+
+.codex-change-file-row > span {
   min-width: 0;
   overflow: hidden;
   color: var(--text);
@@ -1711,9 +1734,58 @@ h2 {
   white-space: nowrap;
 }
 
-.codex-change-files small {
+.codex-change-file-row small {
   font-weight: 750;
   white-space: nowrap;
+}
+
+.codex-change-file-row .open {
+  transform: rotate(180deg);
+}
+
+.file-diff-panel {
+  display: grid;
+  max-height: 360px;
+  overflow: auto;
+  border-top: 1px solid var(--line);
+  background: #161716;
+  color: #e5e7eb;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.file-diff-line {
+  display: grid;
+  grid-template-columns: 48px 48px minmax(0, 1fr);
+  min-width: 680px;
+}
+
+.file-diff-line.context {
+  background: #181a19;
+}
+
+.file-diff-line.added {
+  background: #17351f;
+}
+
+.file-diff-line.deleted {
+  background: #3a1e1e;
+}
+
+.file-diff-line .line-number {
+  padding: 2px 8px;
+  color: #9ca3af;
+  text-align: right;
+  user-select: none;
+}
+
+.file-diff-line code {
+  min-width: 0;
+  padding: 2px 10px;
+  overflow: visible;
+  color: inherit;
+  white-space: pre;
 }
 
 .diff-meta {

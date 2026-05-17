@@ -264,6 +264,18 @@ type DiffRow = {
   deleted: number;
 };
 
+type DiffLine = {
+  type: "context" | "added" | "deleted";
+  oldLine?: number;
+  newLine?: number;
+  text: string;
+};
+
+type FileDiff = {
+  file: string;
+  lines: DiffLine[];
+};
+
 type CodexAction = {
   id: string;
   command: string;
@@ -370,6 +382,56 @@ function progressDiffRows(files: JobProgress["files"] | undefined): DiffRow[] {
     added: file.added,
     deleted: file.deleted
   }));
+}
+
+function parseUnifiedDiff(diff: string | null | undefined): FileDiff[] {
+  if (!diff) return [];
+  const files: FileDiff[] = [];
+  let current: FileDiff | null = null;
+  let oldLine = 0;
+  let newLine = 0;
+
+  for (const line of normalizeDisplayText(diff).split("\n")) {
+    const fileHeader = line.match(/^diff --git a\/(.+?) b\/(.+)$/);
+    if (fileHeader) {
+      current = { file: fileHeader[2] || fileHeader[1] || "", lines: [] };
+      files.push(current);
+      continue;
+    }
+    if (!current) continue;
+
+    const hunk = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+    if (hunk) {
+      oldLine = Number(hunk[1]);
+      newLine = Number(hunk[2]);
+      current.lines.push({ type: "context", oldLine: undefined, newLine: undefined, text: line });
+      continue;
+    }
+
+    if (!line || line.startsWith("index ") || line.startsWith("--- ") || line.startsWith("+++ ")) continue;
+    if (line.startsWith("+")) {
+      current.lines.push({ type: "added", newLine, text: line.slice(1) });
+      newLine += 1;
+      continue;
+    }
+    if (line.startsWith("-")) {
+      current.lines.push({ type: "deleted", oldLine, text: line.slice(1) });
+      oldLine += 1;
+      continue;
+    }
+    if (line.startsWith(" ")) {
+      current.lines.push({ type: "context", oldLine, newLine, text: line.slice(1) });
+      oldLine += 1;
+      newLine += 1;
+    }
+  }
+
+  return files.filter((file) => file.lines.some((line) => line.type !== "context"));
+}
+
+function findFileDiffInList(fileDiffs: FileDiff[], file: string) {
+  const normalized = file.replace(/\\/g, "/");
+  return fileDiffs.find((item) => item.file.replace(/\\/g, "/") === normalized);
 }
 
 function diffRows(stat: string | null, fallbackFiles?: JobProgress["files"], limit = 8): DiffRow[] {
@@ -705,13 +767,15 @@ function metadataCodexActions(message: ChatMessage): CodexAction[] {
 function messageUpdateSignature(message: ChatMessage) {
   const actionCount = Array.isArray(message.metadata?.codexActions) ? message.metadata.codexActions.length : 0;
   const changeStat = typeof message.metadata?.gitDiffStat === "string" ? message.metadata.gitDiffStat.length : 0;
+  const changeDiff = typeof message.metadata?.gitDiff === "string" ? message.metadata.gitDiff.length : 0;
   return [
     message.id,
     message.createdAt,
     message.content.length,
     message.attachments?.length ?? 0,
     actionCount,
-    changeStat
+    changeStat,
+    changeDiff
   ].join(":");
 }
 
@@ -2042,8 +2106,10 @@ function App() {
 
   function renderCodexChangeCard(message: ChatMessage, job?: Job, progress?: JobProgress | null) {
     const stat = job?.gitDiffStat || (typeof message.metadata?.gitDiffStat === "string" ? message.metadata.gitDiffStat : "");
+    const diff = job?.gitDiff || (typeof message.metadata?.gitDiff === "string" ? message.metadata.gitDiff : "");
     if (message.role !== "assistant" || (!stat && !progress?.files?.length)) return null;
     const rows = diffRows(stat || null, progress?.files);
+    const fileDiffs = parseUnifiedDiff(diff);
     const summary = diffSummary(stat || null, progress);
     const actionKey = `changes:${message.id}`;
     const expanded = Boolean(expandedActions[actionKey]);
@@ -2068,16 +2134,46 @@ function App() {
         </div>
         {expanded && rows.length ? (
           <div className="codex-change-files">
-            {rows.map((row) => (
-              <div key={row.file}>
-                <span>{row.file}</span>
-                <small className="diff-meta">{renderDiffRowMeta(row)}</small>
-              </div>
-            ))}
+            {rows.map((row) => {
+              const fileDiff = findFileDiffInList(fileDiffs, row.file);
+              const diffKey = `filediff:${message.id}:${row.file}`;
+              const fileExpanded = Boolean(expandedActions[diffKey]);
+              return (
+                <div className="codex-change-file" key={row.file}>
+                  <button
+                    className="codex-change-file-row"
+                    disabled={!fileDiff}
+                    type="button"
+                    onClick={() => fileDiff && setExpandedActions((current) => ({ ...current, [diffKey]: !current[diffKey] }))}
+                  >
+                    <span>{row.file}</span>
+                    <small className="diff-meta">
+                      {renderDiffRowMeta(row)}
+                      {fileDiff && <ChevronDown className={fileExpanded ? "open" : ""} size={15} />}
+                    </small>
+                  </button>
+                  {fileExpanded && fileDiff && renderFileDiff(fileDiff)}
+                </div>
+              );
+            })}
           </div>
         ) : expanded ? (
           <div className="codex-change-empty">No files changed.</div>
         ) : null}
+      </div>
+    );
+  }
+
+  function renderFileDiff(fileDiff: FileDiff) {
+    return (
+      <div className="file-diff-panel">
+        {fileDiff.lines.map((line, index) => (
+          <div className={`file-diff-line ${line.type}`} key={`${line.oldLine ?? ""}:${line.newLine ?? ""}:${index}`}>
+            <span className="line-number">{line.oldLine ?? ""}</span>
+            <span className="line-number">{line.newLine ?? ""}</span>
+            <code>{line.text || " "}</code>
+          </div>
+        ))}
       </div>
     );
   }
