@@ -4,12 +4,16 @@ import { DatabaseSync } from "node:sqlite";
 import type { LocalCodexActivity } from "@cmc/protocol";
 import type { AgentConfig, RepoConfig } from "./config.js";
 
-const BUSY_WINDOW_MS = 6000;
+const BUSY_WINDOW_MS = 8000;
+const BUSY_IDLE_GRACE_MS = 3 * 60 * 1000;
 
 let busyKey = "";
 let busySinceMs = 0;
+let lastBusySeenMs = 0;
+let lastBusyCandidate: Candidate | undefined;
 
 type Candidate = {
+  key: string;
   repoId?: string;
   source: string;
   title?: string;
@@ -19,7 +23,11 @@ type Candidate = {
 export function detectLocalCodexActivity(config: AgentConfig, currentJobId?: string): LocalCodexActivity {
   const detectedAt = new Date().toISOString();
   if (currentJobId) {
-    markBusy(`web:${currentJobId}`);
+    markBusy(`web:${currentJobId}`, Date.now(), {
+      key: `web:${currentJobId}`,
+      source: "codex.rodion.pro",
+      updatedAt: Date.now()
+    });
     return {
       status: "busy",
       summary: "Codex is running a web task from codex.rodion.pro.",
@@ -32,7 +40,7 @@ export function detectLocalCodexActivity(config: AgentConfig, currentJobId?: str
   const candidate = [...recentCodexThreads(config), ...recentVsCodeSessions(config)]
     .sort((a, b) => b.updatedAt - a.updatedAt)[0];
   if (candidate && Date.now() - candidate.updatedAt <= BUSY_WINDOW_MS) {
-    markBusy(`${candidate.source}:${candidate.repoId ?? ""}:${candidate.title ?? ""}`);
+    markBusy(candidate.key, candidate.updatedAt, candidate);
     return {
       status: "busy",
       summary: `${candidate.source} is updating a local Codex chat.`,
@@ -45,8 +53,23 @@ export function detectLocalCodexActivity(config: AgentConfig, currentJobId?: str
     };
   }
 
+  if (busySinceMs && Date.now() - lastBusySeenMs <= BUSY_IDLE_GRACE_MS && lastBusyCandidate) {
+    return {
+      status: "busy",
+      summary: `${lastBusyCandidate.source} is working on a local Codex chat.`,
+      source: lastBusyCandidate.source,
+      detectedAt,
+      busySinceAt: new Date(busySinceMs).toISOString(),
+      repoId: lastBusyCandidate.repoId,
+      chatTitle: lastBusyCandidate.title?.slice(0, 160),
+      updatedAt: new Date(lastBusySeenMs).toISOString()
+    };
+  }
+
   busyKey = "";
   busySinceMs = 0;
+  lastBusySeenMs = 0;
+  lastBusyCandidate = undefined;
   return {
     status: "idle",
     summary: "No recent local Codex activity.",
@@ -55,10 +78,13 @@ export function detectLocalCodexActivity(config: AgentConfig, currentJobId?: str
   };
 }
 
-function markBusy(key: string): void {
-  if (busyKey === key && busySinceMs) return;
-  busyKey = key;
-  busySinceMs = Date.now();
+function markBusy(key: string, seenAt: number, candidate: Candidate): void {
+  if (busyKey !== key || !busySinceMs || Date.now() - lastBusySeenMs > BUSY_IDLE_GRACE_MS) {
+    busyKey = key;
+    busySinceMs = Date.now();
+  }
+  lastBusySeenMs = Math.max(lastBusySeenMs, seenAt);
+  lastBusyCandidate = candidate;
 }
 
 function recentCodexThreads(config: AgentConfig): Candidate[] {
@@ -79,6 +105,7 @@ function recentCodexThreads(config: AgentConfig): Candidate[] {
       const repo = matchRepo(config.repos, row.cwd);
       if (!repo) return [];
       return [{
+        key: `local-codex:${repo.id}:${row.title}`,
         repoId: repo.id,
         source: "local Codex",
         title: row.title,
@@ -110,6 +137,7 @@ function recentVsCodeSessions(config: AgentConfig): Candidate[] {
       const repo = matchRepo(config.repos, parsed.cwd ?? "");
       if (!repo) return [];
       return [{
+        key: `vscode:${path}`,
         repoId: repo.id,
         source: "VS Code Codex",
         title: parsed.title,
