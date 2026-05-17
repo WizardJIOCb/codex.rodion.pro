@@ -48,8 +48,18 @@ type Agent = {
   name: string;
   hostname?: string;
   status: "online" | "offline";
+  current_job_id?: string | null;
   codex_version?: string;
   git_version?: string;
+  localActivity?: {
+    status: "idle" | "busy";
+    summary: string;
+    source: string;
+    detectedAt: string;
+    repoId?: string;
+    chatTitle?: string;
+    updatedAt?: string;
+  };
   codexUsage?: {
     status: "signed-in" | "signed-out" | "unavailable";
     summary: string;
@@ -575,6 +585,8 @@ function App() {
   const activeChat = useMemo(() => chats.find((chat) => chat.id === activeChatId), [activeChatId, chats]);
   const selectedAgent = agents.find((agent) => agent.status === "online") ?? agents[0];
   const online = agents.some((agent) => agent.status === "online");
+  const localActivity = selectedAgent?.localActivity;
+  const localCodexBusy = localActivity?.status === "busy" || Boolean(selectedAgent?.current_job_id);
   const activeProgress = activeJob ? progressByJob[activeJob.id] ?? {
     jobId: activeJob.id,
     phase: activeJob.status,
@@ -805,7 +817,7 @@ function App() {
       if (message.type === "job.progress") {
         setProgressByJob((current) => ({ ...current, [message.jobId]: message }));
       }
-      if (["job.updated", "job.created", "agent.status", "repos.updated", "chats.updated"].includes(message.type)) {
+      if (["job.updated", "job.created", "agent.status", "agent.activity", "repos.updated", "chats.updated"].includes(message.type)) {
         refresh();
         if (selectedRepo && message.type === "chats.updated" && message.repoId === selectedRepo.id) loadChats(selectedRepo);
         if (message.jobId && activeJob?.id === message.jobId) loadJob(message.jobId);
@@ -879,7 +891,11 @@ function App() {
       body: JSON.stringify(body)
     });
     setBusy(false);
-    if (!response.ok) return;
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      setChatNotice(data.error === "agent_local_busy" ? "Локальный Codex сейчас занят в VS Code или другом локальном чате. Дождись завершения, потом можно запускать задачу из web." : data.error || "Job start failed.");
+      return;
+    }
     const data = await response.json();
     await refresh();
     setProjectPanel(null);
@@ -933,6 +949,10 @@ function App() {
   async function createJob(event: React.FormEvent) {
     event.preventDefault();
     if (!selectedRepo || (!prompt.trim() && !attachments.length) || !csrf) return;
+    if (localCodexBusy) {
+      setChatNotice("Локальный Codex сейчас занят в VS Code или другом локальном чате. Дождись завершения, потом можно запускать задачу из web.");
+      return;
+    }
     let targetChatId = activeChatId;
     const promptText = prompt.trim() || "Посмотри вложенные файлы.";
     setBusy(true);
@@ -1483,6 +1503,8 @@ function App() {
   function renderComposer() {
     if (!selectedRepo) return null;
     const canSubmit = Boolean(prompt.trim() || attachments.length);
+    const activeRunBusy = Boolean(activeJob && ["queued", "assigned", "running"].includes(activeJob.status));
+    const runDisabled = busy || !canSubmit || localCodexBusy || activeRunBusy;
     return (
       <form className="composer" onSubmit={createJob}>
         {attachments.length > 0 && (
@@ -1554,7 +1576,10 @@ function App() {
               </div>
             )}
           </div>
-          <button className="run-button" disabled={busy || !canSubmit} type="submit"><Play size={18} /> Run Codex</button>
+          <button className="run-button" disabled={runDisabled} type="submit">
+            {localCodexBusy ? <RefreshCw className="spin" size={18} /> : <Play size={18} />}
+            {localCodexBusy ? "Codex busy" : "Run Codex"}
+          </button>
           {activeJob && ["queued", "assigned", "running"].includes(activeJob.status) && (
             <button className="stop" type="button" onClick={cancelJob}><Square size={18} /> Stop</button>
           )}
@@ -1940,6 +1965,15 @@ function App() {
             <span>Filesystem Access <strong>{sandbox === "danger-full-access" ? "Full" : "Scoped"}</strong></span>
             <span>Network Access <strong>{sandbox === "danger-full-access" ? "Enabled" : "Restricted"}</strong></span>
             <span>Auto Deploy <strong>{selectedRepo?.serverPath && selectedRepo.deploy?.sshTarget ? "Ready" : "Not set"}</strong></span>
+          </div>
+          <div className={`local-activity ${localCodexBusy ? "busy" : "idle"}`}>
+            <div>
+              <span>Local Codex</span>
+              <strong>{localCodexBusy ? "Busy" : "Idle"}</strong>
+            </div>
+            <p>{localActivity?.summary ?? "Waiting for local activity heartbeat."}</p>
+            {localActivity?.chatTitle && <small>{localActivity.chatTitle}</small>}
+            {localActivity?.updatedAt && <small>Updated {new Date(localActivity.updatedAt).toLocaleTimeString()}</small>}
           </div>
           <div className="codex-limit">
             <div>

@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
-import type { CodexUsage, DeployConfig, JobStatus, RepoInfo, Sandbox } from "@cmc/protocol";
+import type { CodexUsage, DeployConfig, JobStatus, LocalCodexActivity, RepoInfo, Sandbox } from "@cmc/protocol";
 
 export type UserRow = {
   id: string;
@@ -50,6 +50,7 @@ export type AgentRow = {
   codex_version: string | null;
   git_version: string | null;
   codex_usage_json: string | null;
+  local_activity_json: string | null;
   status: "online" | "offline";
   current_job_id: string | null;
   last_seen_at: string | null;
@@ -183,6 +184,7 @@ export function openDb(path: string): DatabaseSync {
       codex_version TEXT,
       git_version TEXT,
       codex_usage_json TEXT,
+      local_activity_json TEXT,
       status TEXT NOT NULL DEFAULT 'offline',
       current_job_id TEXT,
       last_seen_at TEXT,
@@ -361,6 +363,9 @@ export function openDb(path: string): DatabaseSync {
   if (!agentColumns.some((column) => column.name === "codex_usage_json")) {
     db.exec("ALTER TABLE agents ADD COLUMN codex_usage_json TEXT");
   }
+  if (!agentColumns.some((column) => column.name === "local_activity_json")) {
+    db.exec("ALTER TABLE agents ADD COLUMN local_activity_json TEXT");
+  }
   const chatColumns = db.prepare("PRAGMA table_info(chats)").all() as Array<{ name: string }>;
   if (!chatColumns.some((column) => column.name === "source")) {
     db.exec("ALTER TABLE chats ADD COLUMN source TEXT NOT NULL DEFAULT 'web'");
@@ -388,6 +393,15 @@ export function parseCodexUsage(value: string | null): CodexUsage | undefined {
   if (!value) return undefined;
   try {
     return JSON.parse(value) as CodexUsage;
+  } catch {
+    return undefined;
+  }
+}
+
+export function parseLocalActivity(value: string | null): LocalCodexActivity | undefined {
+  if (!value) return undefined;
+  try {
+    return JSON.parse(value) as LocalCodexActivity;
   } catch {
     return undefined;
   }

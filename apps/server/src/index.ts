@@ -21,6 +21,7 @@ import {
   SslSchema,
   UpdateProjectSchema,
   type AgentToServer,
+  type LocalCodexActivity,
   type RepoInfo,
   type ServerToAgent,
   type UiEvent
@@ -32,6 +33,7 @@ import {
   nowIso,
   openDb,
   parseCodexUsage,
+  parseLocalActivity,
   type AgentRow,
   type AttachmentRow,
   type ChatAttachmentRow,
@@ -478,6 +480,20 @@ function clearOrphanedAgentJobs(agentId: string, currentJobId: string | undefine
   }
 }
 
+function freshLocalActivity(activity: LocalCodexActivity | undefined): LocalCodexActivity | undefined {
+  if (!activity) return undefined;
+  const timestamp = Date.parse(activity.detectedAt);
+  if (!Number.isFinite(timestamp) || Date.now() - timestamp > 90000) {
+    return { status: "idle", summary: "No recent local Codex activity.", source: "agent heartbeat", detectedAt: nowIso() };
+  }
+  return activity;
+}
+
+function isAgentLocallyBusy(agentId: string): boolean {
+  const row = db.prepare("SELECT local_activity_json FROM agents WHERE id = ?").get(agentId) as Pick<AgentRow, "local_activity_json"> | undefined;
+  return freshLocalActivity(parseLocalActivity(row?.local_activity_json ?? null))?.status === "busy";
+}
+
 function chatAgentId(chatId: string): string {
   const row = db.prepare("SELECT agent_id FROM chats WHERE id = ?").get(chatId) as { agent_id: string } | undefined;
   return row?.agent_id ?? "";
@@ -675,6 +691,7 @@ function latestCodexThreadIdForChat(chatId: string | null, currentJobId: string)
 function dispatchQueue(agentId: string): void {
   const agent = agents.get(agentId);
   if (!agent) return;
+  if (isAgentLocallyBusy(agentId)) return;
   const running = db.prepare("SELECT * FROM jobs WHERE agent_id = ? AND status IN ('assigned','running') LIMIT 1")
     .get(agentId) as JobRow | undefined;
   if (running) return;
@@ -1171,9 +1188,9 @@ async function createApp(): Promise<FastifyInstance> {
   app.get("/api/agents", async (request, reply) => {
     const auth = requireAuth(db, request, reply);
     if (!auth) return;
-    const rows = db.prepare(`SELECT id,user_id,name,hostname,os,agent_version,codex_version,git_version,codex_usage_json,status,current_job_id,last_seen_at,created_at FROM agents ${agentAccessWhere(auth.user)} ORDER BY created_at`)
+    const rows = db.prepare(`SELECT id,user_id,name,hostname,os,agent_version,codex_version,git_version,codex_usage_json,local_activity_json,status,current_job_id,last_seen_at,created_at FROM agents ${agentAccessWhere(auth.user)} ORDER BY created_at`)
       .all(...agentAccessArgs(auth.user)) as AgentRow[];
-    return { agents: rows.map((row) => ({ ...row, codexUsage: parseCodexUsage(row.codex_usage_json) })) };
+    return { agents: rows.map((row) => ({ ...row, codexUsage: parseCodexUsage(row.codex_usage_json), localActivity: freshLocalActivity(parseLocalActivity(row.local_activity_json)) })) };
   });
 
   app.get("/api/repos", async (request, reply) => {
@@ -1557,6 +1574,7 @@ async function createApp(): Promise<FastifyInstance> {
     if (!repo) return reply.code(404).send({ error: "repo_not_found" });
     const allowed = JSON.parse(repo.allowed_sandboxes) as string[];
     if (!allowed.includes(parsed.data.sandbox)) return reply.code(400).send({ error: "sandbox_not_allowed" });
+    if (isAgentLocallyBusy(parsed.data.agentId)) return reply.code(409).send({ error: "agent_local_busy" });
     const attachmentTotal = parsed.data.attachments.reduce((sum, attachment) => sum + attachment.size, 0);
     if (attachmentTotal > 12 * 1024 * 1024) return reply.code(400).send({ error: "attachments_too_large" });
     let chatId = parsed.data.chatId;
@@ -1660,7 +1678,7 @@ async function createApp(): Promise<FastifyInstance> {
           return;
         }
         db.prepare(`
-          UPDATE agents SET hostname=?, os=?, agent_version=?, codex_version=?, git_version=?, codex_usage_json=?, last_seen_at=?, status='online'
+          UPDATE agents SET hostname=?, os=?, agent_version=?, codex_version=?, git_version=?, codex_usage_json=?, local_activity_json=?, last_seen_at=?, status='online'
           WHERE id=?
         `).run(
           parsed.hostname,
@@ -1669,19 +1687,23 @@ async function createApp(): Promise<FastifyInstance> {
           parsed.codexVersion ?? null,
           parsed.gitVersion ?? null,
           parsed.codexUsage ? JSON.stringify(parsed.codexUsage) : null,
+          parsed.localActivity ? JSON.stringify(parsed.localActivity) : null,
           nowIso(),
           agent.id
         );
+        if (parsed.localActivity) broadcast({ type: "agent.activity", agentId: agent.id, localActivity: parsed.localActivity });
         upsertRepos(agent.id, parsed.repos);
         dispatchQueue(agent.id);
       }
       if (parsed.type === "agent.heartbeat") {
+        const localActivityJson = parsed.localActivity ? JSON.stringify(parsed.localActivity) : null;
         if (parsed.codexUsage) {
-          db.prepare("UPDATE agents SET last_seen_at=?, current_job_id=?, codex_usage_json=? WHERE id=?")
-            .run(nowIso(), parsed.currentJobId ?? null, JSON.stringify(parsed.codexUsage), agent.id);
+          db.prepare("UPDATE agents SET last_seen_at=?, current_job_id=?, codex_usage_json=?, local_activity_json=COALESCE(?, local_activity_json) WHERE id=?")
+            .run(nowIso(), parsed.currentJobId ?? null, JSON.stringify(parsed.codexUsage), localActivityJson, agent.id);
         } else {
-          db.prepare("UPDATE agents SET last_seen_at=?, current_job_id=? WHERE id=?").run(nowIso(), parsed.currentJobId ?? null, agent.id);
+          db.prepare("UPDATE agents SET last_seen_at=?, current_job_id=?, local_activity_json=COALESCE(?, local_activity_json) WHERE id=?").run(nowIso(), parsed.currentJobId ?? null, localActivityJson, agent.id);
         }
+        if (parsed.localActivity) broadcast({ type: "agent.activity", agentId: agent.id, localActivity: parsed.localActivity });
         if (parsed.repos) upsertRepos(agent.id, parsed.repos);
         clearOrphanedAgentJobs(agent.id, parsed.currentJobId);
         dispatchQueue(agent.id);

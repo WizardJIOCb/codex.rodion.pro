@@ -4,11 +4,13 @@ import WebSocket from "ws";
 import { ServerToAgentSchema, type AgentToServer, type CodexUsage, type ServerToAgent } from "@cmc/protocol";
 import { loadAgentConfig, saveAgentConfig } from "./config.js";
 import { Runner } from "./codex-runner.js";
+import { detectLocalCodexActivity } from "./local-activity.js";
 import { syncLocalChats } from "./local-chat-sync.js";
 import { runCapture } from "./process-utils.js";
 import { makeRedactor } from "./redact.js";
 import { scanRepos } from "./repo-scanner.js";
 
+const LOCAL_CHAT_SYNC_INTERVAL_MS = 15000;
 const config = loadAgentConfig();
 const redact = makeRedactor(config.redactPatterns);
 const token = process.env[config.tokenEnv];
@@ -396,6 +398,7 @@ async function hello(): Promise<AgentToServer> {
     codexVersion,
     gitVersion,
     codexUsage,
+    localActivity: detectLocalCodexActivity(config, currentJobId),
     repos
   };
 }
@@ -430,6 +433,7 @@ function connect() {
       send({
         type: "agent.heartbeat",
         currentJobId,
+        localActivity: detectLocalCodexActivity(config, currentJobId),
         codexUsage: await probeCodexUsage(),
         repos: await scanRepos(config)
       });
@@ -586,12 +590,18 @@ function connect() {
 
   const heartbeat = setInterval(async () => {
     if (ws.readyState !== WebSocket.OPEN) return;
-    send({ type: "agent.heartbeat", currentJobId, codexUsage: await probeCodexUsage(), repos: await scanRepos(config) });
+    send({
+      type: "agent.heartbeat",
+      currentJobId,
+      localActivity: detectLocalCodexActivity(config, currentJobId),
+      codexUsage: await probeCodexUsage(),
+      repos: await scanRepos(config)
+    });
   }, config.heartbeatIntervalMs);
   const chatSync = setInterval(async () => {
     if (ws.readyState !== WebSocket.OPEN) return;
     await syncLocalChats(config, send).catch((error) => console.error(`Local chat sync failed: ${error.message}`));
-  }, Math.max(config.heartbeatIntervalMs * 3, 60000));
+  }, Math.max(Math.min(config.heartbeatIntervalMs, LOCAL_CHAT_SYNC_INTERVAL_MS), 5000));
 
   ws.on("close", () => {
     clearInterval(heartbeat);

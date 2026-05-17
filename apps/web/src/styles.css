@@ -1488,6 +1488,7 @@ pre {
   color: var(--text);
 }
 
+.local-activity,
 .codex-limit {
   display: grid;
   gap: 8px;
@@ -1497,6 +1498,12 @@ pre {
   background: #f8f8f5;
 }
 
+.local-activity.busy {
+  border-color: #f0b45f;
+  background: #fff8ec;
+}
+
+.local-activity div:first-child,
 .codex-limit div:first-child {
   display: flex;
   align-items: center;
@@ -1504,21 +1511,39 @@ pre {
   gap: 10px;
 }
 
+.local-activity span,
+.local-activity small,
 .codex-limit span,
 .codex-limit small {
   color: var(--muted);
   font-size: 12px;
 }
 
+.local-activity strong,
 .codex-limit strong {
   color: var(--accent-2);
 }
 
+.local-activity.busy strong {
+  color: var(--warn);
+}
+
+.local-activity p,
 .codex-limit p {
   margin: 0;
   color: var(--text);
   font-size: 12px;
   line-height: 1.4;
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .limit-bar {

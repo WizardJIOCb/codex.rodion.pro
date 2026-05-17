@@ -58,6 +58,17 @@ export const CodexUsageSchema = z.object({
 });
 export type CodexUsage = z.infer<typeof CodexUsageSchema>;
 
+export const LocalCodexActivitySchema = z.object({
+  status: z.enum(["idle", "busy"]),
+  summary: z.string().min(1).max(300),
+  source: z.string().min(1).max(80),
+  detectedAt: z.string().datetime(),
+  repoId: z.string().min(1).max(80).optional(),
+  chatTitle: z.string().max(160).optional(),
+  updatedAt: z.string().datetime().optional()
+});
+export type LocalCodexActivity = z.infer<typeof LocalCodexActivitySchema>;
+
 export const JobAttachmentSchema = z.object({
   name: z.string().min(1).max(180),
   mimeType: z.string().min(1).max(120),
@@ -75,6 +86,7 @@ export const AgentHelloSchema = z.object({
   codexVersion: z.string().optional(),
   gitVersion: z.string().optional(),
   codexUsage: CodexUsageSchema.optional(),
+  localActivity: LocalCodexActivitySchema.optional(),
   repos: z.array(RepoInfoSchema)
 });
 
@@ -82,6 +94,7 @@ export const AgentHeartbeatSchema = z.object({
   type: z.literal("agent.heartbeat"),
   currentJobId: z.string().optional(),
   codexUsage: CodexUsageSchema.optional(),
+  localActivity: LocalCodexActivitySchema.optional(),
   repos: z.array(RepoInfoSchema).optional()
 });
 
@@ -392,6 +405,7 @@ export type CreateAgent = z.infer<typeof CreateAgentSchema>;
 
 export const UiEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("agent.status"), agentId: z.string(), status: z.enum(["online", "offline"]) }),
+  z.object({ type: z.literal("agent.activity"), agentId: z.string(), localActivity: LocalCodexActivitySchema }),
   z.object({ type: z.literal("repos.updated"), agentId: z.string(), repos: z.array(RepoInfoSchema) }),
   z.object({ type: z.literal("chats.updated"), agentId: z.string(), repoId: z.string() }),
   z.object({ type: z.literal("job.created"), jobId: z.string() }),
