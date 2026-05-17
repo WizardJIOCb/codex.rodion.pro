@@ -564,6 +564,7 @@ function App() {
   const [projectDeployBuildCommand, setProjectDeployBuildCommand] = useState("npm.cmd run build");
   const [projectDeployCleanRemote, setProjectDeployCleanRemote] = useState(true);
   const [sandboxMenuOpen, setSandboxMenuOpen] = useState(false);
+  const [actionMenuOpen, setActionMenuOpen] = useState(false);
   const [originalProjectPath, setOriginalProjectPath] = useState("");
   const [chatTitle, setChatTitle] = useState("");
   const [chatMenuId, setChatMenuId] = useState("");
@@ -855,7 +856,11 @@ function App() {
         }
         if (message.type === "agent.activity") {
           setAgents((current) => current.map((agent) => (
-            agent.id === message.agentId ? { ...agent, localActivity: message.localActivity } : agent
+            agent.id === message.agentId ? {
+              ...agent,
+              localActivity: message.localActivity,
+              current_job_id: message.localActivity.status === "idle" ? null : agent.current_job_id
+            } : agent
           )));
           return;
         }
@@ -1190,10 +1195,10 @@ function App() {
     });
   }
 
-  async function syncGit(event: React.FormEvent) {
-    event.preventDefault();
+  async function runGitSync() {
     if (!selectedRepo || !csrf || !gitMessage.trim()) return;
     setGitBusy(true);
+    setActionMenuOpen(false);
     setGitNotice("Git sync started...");
     const response = await api(`/api/projects/${selectedRepo.agentId}/${selectedRepo.id}/git-sync`, {
       method: "POST",
@@ -1212,6 +1217,11 @@ function App() {
     setGitRemoteUrl("");
     setGitNotice(data.output || data.status || "Git sync completed.");
     await refresh();
+  }
+
+  async function syncGit(event: React.FormEvent) {
+    event.preventDefault();
+    await runGitSync();
   }
 
   async function deployProject() {
@@ -1651,6 +1661,26 @@ function App() {
                     {sandbox === item && <Check size={16} />}
                   </button>
                 ))}
+              </div>
+            )}
+          </div>
+          <div className="action-control">
+            <button
+              aria-expanded={actionMenuOpen}
+              aria-label="Message actions"
+              className="action-trigger"
+              title="Actions"
+              type="button"
+              onClick={() => setActionMenuOpen((value) => !value)}
+            >
+              <MoreHorizontal size={18} />
+            </button>
+            {actionMenuOpen && (
+              <div className="action-menu" role="menu">
+                <button disabled={gitBusy || !gitMessage.trim()} role="menuitem" type="button" onClick={runGitSync}>
+                  <UploadCloud size={16} />
+                  <span>Commit & push</span>
+                </button>
               </div>
             )}
           </div>

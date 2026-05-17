@@ -4,7 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import type { LocalCodexActivity } from "@cmc/protocol";
 import type { AgentConfig, RepoConfig } from "./config.js";
 
-const BUSY_WINDOW_MS = 45000;
+const BUSY_WINDOW_MS = 15000;
 
 type Candidate = {
   repoId?: string;

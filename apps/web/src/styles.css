@@ -937,7 +937,7 @@ textarea:focus {
   position: sticky;
   bottom: max(8px, env(safe-area-inset-bottom));
   display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  grid-template-columns: auto auto auto minmax(0, 1fr) auto;
   gap: 6px;
   align-items: center;
   overflow: visible;
@@ -949,12 +949,14 @@ textarea:focus {
   background: var(--danger);
 }
 
-.sandbox-control {
+.sandbox-control,
+.action-control {
   position: relative;
   min-width: 0;
 }
 
-.sticky-submit .sandbox-trigger {
+.sticky-submit .sandbox-trigger,
+.sticky-submit .action-trigger {
   width: 40px;
   min-width: 40px;
   height: 40px;
@@ -967,12 +969,15 @@ textarea:focus {
 }
 
 .sticky-submit .sandbox-trigger:hover,
-.sticky-submit .sandbox-trigger[aria-expanded="true"] {
+.sticky-submit .sandbox-trigger[aria-expanded="true"],
+.sticky-submit .action-trigger:hover,
+.sticky-submit .action-trigger[aria-expanded="true"] {
   border-color: var(--line-strong);
   background: var(--panel-2);
 }
 
-.sandbox-menu {
+.sandbox-menu,
+.action-menu {
   position: absolute;
   left: 0;
   bottom: calc(100% + 8px);
@@ -987,7 +992,12 @@ textarea:focus {
   box-shadow: var(--shadow);
 }
 
-.sticky-submit .sandbox-menu button {
+.action-menu {
+  width: 230px;
+}
+
+.sticky-submit .sandbox-menu button,
+.sticky-submit .action-menu button {
   width: 100%;
   min-height: 34px;
   justify-content: space-between;
@@ -999,7 +1009,8 @@ textarea:focus {
 }
 
 .sticky-submit .sandbox-menu button:hover,
-.sticky-submit .sandbox-menu button.selected {
+.sticky-submit .sandbox-menu button.selected,
+.sticky-submit .action-menu button:hover {
   background: var(--panel-2);
 }
 
@@ -1216,17 +1227,7 @@ h2 {
   display: grid;
   gap: 8px;
   min-width: 0;
-  padding: 10px 10px 10px 34px;
-}
-
-.chat-thread::before {
-  content: "";
-  position: absolute;
-  left: 18px;
-  top: 12px;
-  bottom: 12px;
-  width: 1px;
-  background: linear-gradient(var(--line), #bfc1ba, var(--line));
+  padding: 10px;
 }
 
 .message {
@@ -1238,18 +1239,6 @@ h2 {
   border-radius: 8px;
   border: 1px solid var(--line);
   background: #ffffff;
-}
-
-.message::before {
-  content: "";
-  position: absolute;
-  left: -25px;
-  top: 13px;
-  width: 10px;
-  height: 10px;
-  border-radius: 999px;
-  background: var(--accent);
-  box-shadow: 0 0 0 5px rgba(32, 33, 35, 0.08);
 }
 
 .message.user {
@@ -1778,7 +1767,7 @@ button:disabled {
   }
 
   .sticky-submit {
-    grid-template-columns: auto auto minmax(0, 1fr);
+    grid-template-columns: auto auto auto minmax(0, 1fr);
   }
 
   .sticky-submit .stop {
