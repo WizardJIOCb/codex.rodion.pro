@@ -362,6 +362,13 @@ export const CreateUserSchema = z.object({
 });
 export type CreateUser = z.infer<typeof CreateUserSchema>;
 
+export const RegisterSchema = z.object({
+  email: z.string().email().max(200),
+  password: z.string().min(8).max(200),
+  nickname: z.string().trim().min(3).max(32).regex(/^[a-z0-9_](?:[a-z0-9_.-]*[a-z0-9_])?$/i).optional().or(z.literal(""))
+});
+export type Register = z.infer<typeof RegisterSchema>;
+
 export const ProfileUpdateSchema = z.object({
   nickname: z.string().trim().min(3).max(32).regex(/^[a-z0-9_](?:[a-z0-9_.-]*[a-z0-9_])?$/i).optional().or(z.literal("")),
   bio: z.string().max(1000).optional(),

@@ -501,6 +501,10 @@ function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [registerNickname, setRegisterNickname] = useState("");
+  const [authNotice, setAuthNotice] = useState("");
+  const [authOauthProviders, setAuthOauthProviders] = useState<OAuthProvider[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [repos, setRepos] = useState<Repo[]>([]);
   const [chats, setChats] = useState<Chat[]>([]);
@@ -603,6 +607,11 @@ function App() {
     setProfileNickname(data.user.nickname ?? "");
     setProfileBio(data.user.bio ?? "");
     setProfileAvatarDataUrl(data.user.avatarDataUrl ?? "");
+  }
+
+  async function loadAuthOAuthProviders() {
+    const response = await api("/api/oauth/providers");
+    if (response.ok) setAuthOauthProviders((await response.json()).providers);
   }
 
   async function loadChats(repo: Repo, selectFirst = false) {
@@ -756,6 +765,10 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (!csrf) loadAuthOAuthProviders();
+  }, [csrf]);
+
+  useEffect(() => {
     if (!csrf) return;
     const protocol = location.protocol === "https:" ? "wss" : "ws";
     const ws = new WebSocket(`${protocol}://${location.host}/api/ui/ws`);
@@ -784,13 +797,36 @@ function App() {
   async function login(event: React.FormEvent) {
     event.preventDefault();
     setBusy(true);
+    setAuthNotice("");
     const response = await api("/api/login", {
       method: "POST",
       body: JSON.stringify({ email, password })
     });
     setBusy(false);
-    if (!response.ok) return;
+    if (!response.ok) {
+      setAuthNotice("Не получилось войти: проверь email и пароль.");
+      return;
+    }
     const data = await response.json();
+    setCurrentUser(data.user);
+    setCsrf(data.csrfToken);
+    refresh();
+  }
+
+  async function register(event: React.FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setAuthNotice("");
+    const response = await api("/api/register", {
+      method: "POST",
+      body: JSON.stringify({ email, password, nickname: registerNickname.trim() })
+    });
+    const data = await response.json().catch(() => ({}));
+    setBusy(false);
+    if (!response.ok) {
+      setAuthNotice(data.error === "user_exists" ? "Пользователь с таким email уже есть." : data.error === "nickname_taken" ? "Этот nickname уже занят." : "Регистрация не получилась.");
+      return;
+    }
     setCurrentUser(data.user);
     setCsrf(data.csrfToken);
     refresh();
@@ -1181,6 +1217,22 @@ function App() {
     }
   }
 
+  async function startAuthOAuth(provider: OAuthProvider["provider"]) {
+    setBusy(true);
+    setAuthNotice("");
+    const response = await api(`/api/oauth/${provider}/start`, {
+      method: "POST",
+      body: JSON.stringify({ returnTo: "/" })
+    });
+    const data = await response.json().catch(() => ({}));
+    setBusy(false);
+    if (!response.ok) {
+      setAuthNotice(data.error === "oauth_provider_not_configured" ? `${oauthLabel(provider)} OAuth ещё не настроен на сервере.` : data.error || "OAuth start failed.");
+      return;
+    }
+    if (data.url) location.href = data.url;
+  }
+
   function updateProfileAvatar(file?: File) {
     if (!file) return;
     if (!isPreviewableImage(file.type) || file.size > 1024 * 1024) {
@@ -1453,11 +1505,30 @@ function App() {
           <img className="brand-logo large" src="/favicon.svg" alt="" />
           <h1>Codex Control</h1>
           <p>Домашний Codex, управляемый с iPhone.</p>
-          <form onSubmit={login}>
+          <div className="auth-tabs">
+            <button className={authMode === "login" ? "active" : ""} type="button" onClick={() => setAuthMode("login")}>Вход</button>
+            <button className={authMode === "register" ? "active" : ""} type="button" onClick={() => setAuthMode("register")}>Регистрация</button>
+          </div>
+          <form onSubmit={authMode === "login" ? login : register}>
             <input autoComplete="email" placeholder="email" value={email} onChange={(event) => setEmail(event.target.value)} />
-            <input autoComplete="current-password" placeholder="password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
-            <button disabled={busy} type="submit"><Play size={18} /> Войти</button>
+            {authMode === "register" && (
+              <input autoComplete="nickname" placeholder="nickname, optional" value={registerNickname} onChange={(event) => setRegisterNickname(event.target.value)} />
+            )}
+            <input autoComplete={authMode === "login" ? "current-password" : "new-password"} placeholder="password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
+            <button disabled={busy || !email.trim() || !password || (authMode === "register" && password.length < 8)} type="submit"><Play size={18} /> {authMode === "login" ? "Войти" : "Создать аккаунт"}</button>
           </form>
+          <div className="oauth-login">
+            <span>Войти или зарегистрироваться через</span>
+            <div>
+              {(authOauthProviders.length ? authOauthProviders : ["google", "github", "vk", "mailru"].map((provider) => ({ provider, connected: false, configured: false } as OAuthProvider))).map((provider) => (
+                <button key={provider.provider} type="button" disabled={busy} onClick={() => startAuthOAuth(provider.provider)} title={provider.configured ? oauthLabel(provider.provider) : `${oauthLabel(provider.provider)} не настроен`}>
+                  {oauthIcon(provider.provider)}
+                  <span>{oauthLabel(provider.provider)}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+          {authNotice && <div className="notice danger">{authNotice}</div>}
         </section>
       </main>
     );

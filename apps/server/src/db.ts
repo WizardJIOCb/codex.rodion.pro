@@ -22,6 +22,15 @@ export type OAuthConnectionRow = {
   connected_at: string;
 };
 
+export type OAuthStateRow = {
+  state: string;
+  provider: string;
+  user_id: string | null;
+  return_to: string | null;
+  created_at: string;
+  expires_at: string;
+};
+
 export type SessionRow = {
   id: string;
   user_id: string;
@@ -253,6 +262,14 @@ export function openDb(path: string): DatabaseSync {
       connected_at TEXT NOT NULL,
       PRIMARY KEY (user_id, provider)
     );
+    CREATE TABLE IF NOT EXISTS oauth_states (
+      state TEXT PRIMARY KEY,
+      provider TEXT NOT NULL,
+      user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+      return_to TEXT,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS deleted_chat_sync (
       agent_id TEXT NOT NULL,
       repo_id TEXT NOT NULL,
@@ -267,6 +284,7 @@ export function openDb(path: string): DatabaseSync {
     CREATE INDEX IF NOT EXISTS idx_messages_chat_at ON chat_messages(chat_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_attachments_job ON job_attachments(job_id);
     CREATE INDEX IF NOT EXISTS idx_attachments_message ON job_attachments(chat_message_id);
+    CREATE INDEX IF NOT EXISTS idx_oauth_states_expires ON oauth_states(expires_at);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_external ON chat_messages(chat_id, source, external_id) WHERE external_id IS NOT NULL;
   `);
   const userColumns = db.prepare("PRAGMA table_info(users)").all() as Array<{ name: string }>;

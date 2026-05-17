@@ -17,6 +17,7 @@ import {
   NginxSchema,
   PasswordUpdateSchema,
   ProfileUpdateSchema,
+  RegisterSchema,
   SslSchema,
   UpdateProjectSchema,
   type AgentToServer,
@@ -38,6 +39,7 @@ import {
   type JobRow,
   type LogRow,
   type OAuthConnectionRow,
+  type OAuthStateRow,
   type RepoRow,
   type UserRow
 } from "./db.js";
@@ -64,6 +66,14 @@ type AgentConnection = {
 const agents = new Map<string, AgentConnection>();
 type AuthUser = Pick<UserRow, "id" | "role">;
 const uiClients = new Set<{ user: AuthUser; send: (event: UiEvent) => void }>();
+type OAuthProviderId = "google" | "github" | "vk" | "mailru";
+const oauthProviderIds: OAuthProviderId[] = ["google", "github", "vk", "mailru"];
+type OAuthProfile = {
+  provider: OAuthProviderId;
+  providerUserId: string;
+  email: string;
+  displayName?: string;
+};
 const projectRequests = new Map<string, {
   resolve: (value: Extract<AgentToServer, { type: "project.result" }>) => void;
   reject: (error: Error) => void;
@@ -113,6 +123,69 @@ function requireAdminUser(auth: { user: UserRow }, reply: FastifyReply): boolean
   if (auth.user.role === "admin") return true;
   reply.code(403).send({ error: "admin_required" });
   return false;
+}
+
+function isOAuthProvider(value: string): value is OAuthProviderId {
+  return oauthProviderIds.includes(value as OAuthProviderId);
+}
+
+function publicOrigin(request: { protocol: string; hostname: string }): string {
+  return `${request.protocol}://${request.hostname}`;
+}
+
+function oauthEnvPrefix(provider: OAuthProviderId): string {
+  return provider === "mailru" ? "MAILRU" : provider.toUpperCase();
+}
+
+function oauthClient(provider: OAuthProviderId): { clientId: string; clientSecret: string } | null {
+  const prefix = oauthEnvPrefix(provider);
+  const clientId = process.env[`${prefix}_CLIENT_ID`];
+  const clientSecret = process.env[`${prefix}_CLIENT_SECRET`];
+  return clientId && clientSecret ? { clientId, clientSecret } : null;
+}
+
+function oauthRedirectUri(request: { protocol: string; hostname: string }, provider: OAuthProviderId): string {
+  return `${publicOrigin(request)}/api/oauth/${provider}/callback`;
+}
+
+function oauthAuthorizeUrl(provider: OAuthProviderId, clientId: string, redirectUri: string, state: string): string {
+  const urls: Record<OAuthProviderId, string> = {
+    google: "https://accounts.google.com/o/oauth2/v2/auth",
+    github: "https://github.com/login/oauth/authorize",
+    vk: "https://oauth.vk.com/authorize",
+    mailru: "https://oauth.mail.ru/login"
+  };
+  const url = new URL(urls[provider]);
+  url.searchParams.set("client_id", clientId);
+  url.searchParams.set("redirect_uri", redirectUri);
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("state", state);
+  if (provider === "google") {
+    url.searchParams.set("scope", "openid email profile");
+    url.searchParams.set("prompt", "select_account");
+  }
+  if (provider === "github") url.searchParams.set("scope", "read:user user:email");
+  if (provider === "vk") {
+    url.searchParams.set("scope", "email");
+    url.searchParams.set("v", "5.199");
+  }
+  if (provider === "mailru") url.searchParams.set("scope", "userinfo");
+  return url.toString();
+}
+
+function oauthProviders(userId?: string) {
+  const rows = userId ? db.prepare("SELECT * FROM oauth_connections WHERE user_id = ?").all(userId) as OAuthConnectionRow[] : [];
+  const byProvider = new Map(rows.map((row) => [row.provider, row]));
+  return oauthProviderIds.map((provider) => {
+    const row = byProvider.get(provider);
+    return {
+      provider,
+      connected: Boolean(row),
+      displayName: row?.display_name,
+      connectedAt: row?.connected_at,
+      configured: Boolean(oauthClient(provider))
+    };
+  });
 }
 
 function serializeUser(user: UserRow) {
@@ -165,21 +238,6 @@ function profileStats(user: AuthUser) {
     projects: repoStats.projects,
     generationSeconds: jobStats.seconds ?? 0
   };
-}
-
-function oauthProviders(userId: string) {
-  const rows = db.prepare("SELECT * FROM oauth_connections WHERE user_id = ?").all(userId) as OAuthConnectionRow[];
-  const byProvider = new Map(rows.map((row) => [row.provider, row]));
-  return ["google", "github", "vk", "mailru"].map((provider) => {
-    const row = byProvider.get(provider);
-    return {
-      provider,
-      connected: Boolean(row),
-      displayName: row?.display_name,
-      connectedAt: row?.connected_at,
-      configured: false
-    };
-  });
 }
 
 function visibleAgentIds(user: AuthUser): string[] {
@@ -715,6 +773,163 @@ function agentSetupPayload(request: { protocol: string; hostname: string }, agen
   return { agentId, serverUrl, token, configJson, setupPowerShell };
 }
 
+async function tokenRequest(url: string, params: Record<string, string>, headers: Record<string, string> = {}): Promise<Record<string, unknown>> {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded", ...headers },
+    body: new URLSearchParams(params)
+  });
+  const text = await response.text();
+  let data: Record<string, unknown>;
+  try {
+    data = JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    data = Object.fromEntries(new URLSearchParams(text)) as Record<string, unknown>;
+  }
+  if (!response.ok) throw new Error(String(data.error_description ?? data.error ?? "oauth_token_failed"));
+  return data;
+}
+
+async function jsonGet(url: string, headers: Record<string, string> = {}): Promise<Record<string, unknown>> {
+  const response = await fetch(url, { headers });
+  const data = await response.json().catch(() => ({})) as Record<string, unknown>;
+  if (!response.ok) throw new Error(String(data.error_description ?? data.error ?? "oauth_profile_failed"));
+  return data;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+async function fetchOAuthProfile(provider: OAuthProviderId, code: string, redirectUri: string, client: { clientId: string; clientSecret: string }): Promise<OAuthProfile> {
+  if (provider === "google") {
+    const token = await tokenRequest("https://oauth2.googleapis.com/token", {
+      client_id: client.clientId,
+      client_secret: client.clientSecret,
+      code,
+      grant_type: "authorization_code",
+      redirect_uri: redirectUri
+    });
+    const accessToken = stringValue(token.access_token);
+    if (!accessToken) throw new Error("oauth_token_missing");
+    const profile = await jsonGet("https://www.googleapis.com/oauth2/v3/userinfo", { authorization: `Bearer ${accessToken}` });
+    const email = stringValue(profile.email);
+    const providerUserId = stringValue(profile.sub);
+    if (!email || !providerUserId) throw new Error("oauth_email_missing");
+    return { provider, email: email.toLowerCase(), providerUserId, displayName: stringValue(profile.name) ?? email };
+  }
+  if (provider === "github") {
+    const token = await tokenRequest("https://github.com/login/oauth/access_token", {
+      client_id: client.clientId,
+      client_secret: client.clientSecret,
+      code,
+      redirect_uri: redirectUri
+    }, { accept: "application/json" });
+    const accessToken = stringValue(token.access_token);
+    if (!accessToken) throw new Error("oauth_token_missing");
+    const profile = await jsonGet("https://api.github.com/user", {
+      authorization: `Bearer ${accessToken}`,
+      accept: "application/vnd.github+json",
+      "user-agent": "codex.rodion.pro"
+    });
+    let email = stringValue(profile.email);
+    if (!email) {
+      const emails = await fetch("https://api.github.com/user/emails", {
+        headers: {
+          authorization: `Bearer ${accessToken}`,
+          accept: "application/vnd.github+json",
+          "user-agent": "codex.rodion.pro"
+        }
+      }).then((response) => response.json().catch(() => [])) as Array<Record<string, unknown>>;
+      email = stringValue(emails.find((item) => item.primary === true && item.verified === true)?.email)
+        ?? stringValue(emails.find((item) => item.verified === true)?.email);
+    }
+    const providerUserId = String(profile.id ?? "");
+    if (!email || !providerUserId) throw new Error("oauth_email_missing");
+    return { provider, email: email.toLowerCase(), providerUserId, displayName: stringValue(profile.name) ?? stringValue(profile.login) ?? email };
+  }
+  if (provider === "vk") {
+    const token = await tokenRequest("https://oauth.vk.com/access_token", {
+      client_id: client.clientId,
+      client_secret: client.clientSecret,
+      code,
+      redirect_uri: redirectUri
+    });
+    const accessToken = stringValue(token.access_token);
+    const providerUserId = String(token.user_id ?? "");
+    const email = stringValue(token.email);
+    if (!accessToken || !providerUserId || !email) throw new Error("oauth_email_missing");
+    const url = new URL("https://api.vk.com/method/users.get");
+    url.searchParams.set("user_ids", providerUserId);
+    url.searchParams.set("fields", "screen_name");
+    url.searchParams.set("access_token", accessToken);
+    url.searchParams.set("v", "5.199");
+    const data = await jsonGet(url.toString());
+    const first = Array.isArray(data.response) ? data.response[0] as Record<string, unknown> | undefined : undefined;
+    return { provider, email: email.toLowerCase(), providerUserId, displayName: [stringValue(first?.first_name), stringValue(first?.last_name)].filter(Boolean).join(" ") || email };
+  }
+  const token = await tokenRequest("https://oauth.mail.ru/token", {
+    client_id: client.clientId,
+    client_secret: client.clientSecret,
+    code,
+    grant_type: "authorization_code",
+    redirect_uri: redirectUri
+  });
+  const accessToken = stringValue(token.access_token);
+  if (!accessToken) throw new Error("oauth_token_missing");
+  const profile = await jsonGet(`https://oauth.mail.ru/userinfo?access_token=${encodeURIComponent(accessToken)}`);
+  const email = stringValue(profile.email);
+  const providerUserId = String(profile.id ?? profile.uid ?? "");
+  if (!email || !providerUserId) throw new Error("oauth_email_missing");
+  return { provider, email: email.toLowerCase(), providerUserId, displayName: stringValue(profile.name) ?? stringValue(profile.nickname) ?? email };
+}
+
+function safeReturnTo(value: string | undefined): string {
+  if (!value || !value.startsWith("/") || value.startsWith("//")) return "/";
+  return value.slice(0, 300);
+}
+
+function userCount(): number {
+  const row = db.prepare("SELECT COUNT(*) AS count FROM users").get() as { count: number };
+  return row.count;
+}
+
+async function createUserSession(reply: FastifyReply, userId: string) {
+  const user = db.prepare("SELECT * FROM users WHERE id = ?").get(userId) as UserRow;
+  const session = await createSession(db, user.id);
+  setSessionCookie(reply, config, session.id);
+  return { user: serializeUser(user), csrfToken: session.csrf_token };
+}
+
+async function createOrLoginOAuthUser(profile: OAuthProfile, linkUserId?: string): Promise<string> {
+  const stamp = nowIso();
+  if (linkUserId) {
+    db.prepare(`
+      INSERT INTO oauth_connections (user_id,provider,provider_user_id,display_name,connected_at)
+      VALUES (?,?,?,?,?)
+      ON CONFLICT(user_id, provider) DO UPDATE SET
+        provider_user_id=excluded.provider_user_id,
+        display_name=excluded.display_name,
+        connected_at=excluded.connected_at
+    `).run(linkUserId, profile.provider, profile.providerUserId, profile.displayName ?? null, stamp);
+    return linkUserId;
+  }
+  const connection = db.prepare("SELECT user_id FROM oauth_connections WHERE provider = ? AND provider_user_id = ?")
+    .get(profile.provider, profile.providerUserId) as { user_id: string } | undefined;
+  if (connection) return connection.user_id;
+  let user = db.prepare("SELECT * FROM users WHERE email = ?").get(profile.email) as UserRow | undefined;
+  if (!user) {
+    const userId = id("usr");
+    const role = userCount() === 0 ? "admin" : "user";
+    db.prepare("INSERT INTO users (id,email,password_hash,role,nickname,created_at) VALUES (?,?,?,?,?,?)")
+      .run(userId, profile.email, await hashSecret(randomToken("oauth_password")), role, null, stamp);
+    user = db.prepare("SELECT * FROM users WHERE id = ?").get(userId) as UserRow;
+  }
+  db.prepare("INSERT OR IGNORE INTO oauth_connections (user_id,provider,provider_user_id,display_name,connected_at) VALUES (?,?,?,?,?)")
+    .run(user.id, profile.provider, profile.providerUserId, profile.displayName ?? null, stamp);
+  return user.id;
+}
+
 async function createApp(): Promise<FastifyInstance> {
   const app = Fastify({ logger: true, trustProxy: true, bodyLimit: 20 * 1024 * 1024 });
   await app.register(fastifyCookie);
@@ -728,6 +943,44 @@ async function createApp(): Promise<FastifyInstance> {
   });
 
   app.get("/api/health", async () => ({ ok: true, now: nowIso() }));
+
+  app.get("/api/oauth/providers", async () => ({ providers: oauthProviders() }));
+
+  app.post("/api/oauth/:provider/start", async (request, reply) => {
+    const provider = (request.params as { provider: string }).provider;
+    if (!isOAuthProvider(provider)) return reply.code(404).send({ error: "provider_not_found" });
+    const client = oauthClient(provider);
+    if (!client) return reply.code(501).send({ error: "oauth_provider_not_configured", provider });
+    const state = randomToken("oauth_state");
+    const stamp = nowIso();
+    db.prepare("DELETE FROM oauth_states WHERE expires_at < ?").run(stamp);
+    db.prepare("INSERT INTO oauth_states (state,provider,user_id,return_to,created_at,expires_at) VALUES (?,?,?,?,?,?)")
+      .run(state, provider, null, safeReturnTo((request.body as { returnTo?: string } | undefined)?.returnTo), stamp, new Date(Date.now() + 10 * 60 * 1000).toISOString());
+    return { url: oauthAuthorizeUrl(provider, client.clientId, oauthRedirectUri(request, provider), state) };
+  });
+
+  app.get("/api/oauth/:provider/callback", async (request, reply) => {
+    const provider = (request.params as { provider: string }).provider;
+    if (!isOAuthProvider(provider)) return reply.code(404).send("Provider not found.");
+    const query = request.query as { code?: string; state?: string; error?: string };
+    if (query.error) return reply.redirect(`/?oauth_error=${encodeURIComponent(query.error)}`);
+    if (!query.code || !query.state) return reply.code(400).send("Missing OAuth code/state.");
+    const row = db.prepare("SELECT * FROM oauth_states WHERE state = ? AND provider = ?").get(query.state, provider) as OAuthStateRow | undefined;
+    db.prepare("DELETE FROM oauth_states WHERE state = ?").run(query.state);
+    if (!row || Date.parse(row.expires_at) < Date.now()) return reply.code(400).send("OAuth state expired.");
+    const client = oauthClient(provider);
+    if (!client) return reply.code(501).send("OAuth provider is not configured.");
+    try {
+      const profile = await fetchOAuthProfile(provider, query.code, oauthRedirectUri(request, provider), client);
+      const userId = await createOrLoginOAuthUser(profile, row.user_id ?? undefined);
+      if (row.user_id) return reply.redirect(safeReturnTo(row.return_to ?? "/profile"));
+      await createUserSession(reply, userId);
+      return reply.redirect(safeReturnTo(row.return_to ?? "/"));
+    } catch (error) {
+      request.log.warn({ provider, error: error instanceof Error ? error.message : String(error) }, "OAuth callback failed");
+      return reply.redirect(`/?oauth_error=${encodeURIComponent("oauth_failed")}`);
+    }
+  });
 
   app.get("/api/me", async (request, reply) => {
     const auth = getSession(db, request);
@@ -779,8 +1032,15 @@ async function createApp(): Promise<FastifyInstance> {
     const auth = requireAuth(db, request, reply);
     if (!auth || !requireCsrf(db, request, reply)) return;
     const provider = (request.params as { provider: string }).provider;
-    if (!["google", "github", "vk", "mailru"].includes(provider)) return reply.code(404).send({ error: "provider_not_found" });
-    return reply.code(501).send({ error: "oauth_provider_not_configured", provider });
+    if (!isOAuthProvider(provider)) return reply.code(404).send({ error: "provider_not_found" });
+    const client = oauthClient(provider);
+    if (!client) return reply.code(501).send({ error: "oauth_provider_not_configured", provider });
+    const state = randomToken("oauth_state");
+    const stamp = nowIso();
+    db.prepare("DELETE FROM oauth_states WHERE expires_at < ?").run(stamp);
+    db.prepare("INSERT INTO oauth_states (state,provider,user_id,return_to,created_at,expires_at) VALUES (?,?,?,?,?,?)")
+      .run(state, provider, auth.user.id, "/profile", stamp, new Date(Date.now() + 10 * 60 * 1000).toISOString());
+    return { url: oauthAuthorizeUrl(provider, client.clientId, oauthRedirectUri(request, provider), state) };
   });
 
   app.post("/api/login", async (request, reply) => {
@@ -793,7 +1053,24 @@ async function createApp(): Promise<FastifyInstance> {
     }
     const session = await createSession(db, user.id);
     setSessionCookie(reply, config, session.id);
-    return { user: { id: user.id, email: user.email, role: user.role }, csrfToken: session.csrf_token };
+    return { user: serializeUser(user), csrfToken: session.csrf_token };
+  });
+
+  app.post("/api/register", async (request, reply) => {
+    const parsed = RegisterSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_registration", details: parsed.error.flatten() });
+    const email = parsed.data.email.trim().toLowerCase();
+    const existing = db.prepare("SELECT id FROM users WHERE email = ?").get(email) as { id: string } | undefined;
+    if (existing) return reply.code(409).send({ error: "user_exists" });
+    const nickname = parsed.data.nickname ? parsed.data.nickname.trim().toLowerCase() : null;
+    if (nickname) {
+      const nicknameOwner = db.prepare("SELECT id FROM users WHERE nickname = ?").get(nickname) as { id: string } | undefined;
+      if (nicknameOwner) return reply.code(409).send({ error: "nickname_taken" });
+    }
+    const userId = id("usr");
+    db.prepare("INSERT INTO users (id,email,password_hash,role,nickname,created_at) VALUES (?,?,?,?,?,?)")
+      .run(userId, email, await hashSecret(parsed.data.password), userCount() === 0 ? "admin" : "user", nickname, nowIso());
+    return reply.code(201).send(await createUserSession(reply, userId));
   });
 
   app.post("/api/logout", async (request, reply) => {
