@@ -1348,11 +1348,10 @@ h2 {
 }
 
 .jump-to-latest {
-  position: sticky;
-  right: 12px;
-  bottom: 12px;
-  justify-self: end;
-  z-index: 4;
+  position: fixed;
+  right: clamp(18px, 4vw, 64px);
+  bottom: 94px;
+  z-index: 30;
   min-height: 38px;
   display: inline-flex;
   align-items: center;

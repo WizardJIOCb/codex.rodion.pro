@@ -654,6 +654,37 @@ function codexActionEntries(logs: Log[]): CodexAction[] {
   return [...byId.values()];
 }
 
+function metadataCodexActions(message: ChatMessage): CodexAction[] {
+  const raw = message.metadata?.codexActions;
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((item, index) => {
+    if (!item || typeof item !== "object") return [];
+    const value = item as Record<string, unknown>;
+    const command = typeof value.command === "string" ? value.command.trim() : "";
+    if (!command) return [];
+    return [{
+      id: typeof value.id === "string" ? value.id : `${message.id}:action:${index}`,
+      command: summarizeDisplayCommand(command),
+      status: typeof value.status === "string" ? value.status : "completed",
+      output: typeof value.output === "string" ? normalizeDisplayText(value.output).trim() : "",
+      at: typeof value.at === "string" ? value.at : message.createdAt
+    }];
+  });
+}
+
+function messageUpdateSignature(message: ChatMessage) {
+  const actionCount = Array.isArray(message.metadata?.codexActions) ? message.metadata.codexActions.length : 0;
+  const changeStat = typeof message.metadata?.gitDiffStat === "string" ? message.metadata.gitDiffStat.length : 0;
+  return [
+    message.id,
+    message.createdAt,
+    message.content.length,
+    message.attachments?.length ?? 0,
+    actionCount,
+    changeStat
+  ].join(":");
+}
+
 function renderLogs(logs: Log[]) {
   const visibleLogs = logs
     .map((line) => ({ ...line, display: displayLogMessage(line) }))
@@ -812,6 +843,7 @@ function App() {
   const lastMessageRef = useRef<HTMLElement | null>(null);
   const currentScrollChatRef = useRef("");
   const previousMessageIdsRef = useRef<Set<string>>(new Set());
+  const previousMessageSignaturesRef = useRef<Map<string, string>>(new Map());
   const chatAtBottomRef = useRef(true);
   activeChatIdRef.current = activeChatId;
   activeJobIdRef.current = activeJob?.id ?? "";
@@ -1224,10 +1256,12 @@ function App() {
   useEffect(() => {
     const messageIds = messages.map((message) => message.id);
     const nextIds = new Set(messageIds);
+    const nextSignatures = new Map(messages.map((message) => [message.id, messageUpdateSignature(message)]));
 
     if (currentScrollChatRef.current !== activeChatId) {
       currentScrollChatRef.current = activeChatId;
       previousMessageIdsRef.current = nextIds;
+      previousMessageSignaturesRef.current = nextSignatures;
       setHighlightedMessageIds(new Set());
       setShowJumpToLatest(false);
       window.requestAnimationFrame(() => scrollChatToLatest("auto"));
@@ -1235,14 +1269,20 @@ function App() {
     }
 
     const newIds = messageIds.filter((id) => !previousMessageIdsRef.current.has(id));
+    const updatedIds = messages
+      .filter((message) => previousMessageIdsRef.current.has(message.id))
+      .filter((message) => previousMessageSignaturesRef.current.get(message.id) !== nextSignatures.get(message.id))
+      .map((message) => message.id);
+    const changedIds = [...new Set([...newIds, ...updatedIds])];
     previousMessageIdsRef.current = nextIds;
-    if (!newIds.length) return;
+    previousMessageSignaturesRef.current = nextSignatures;
+    if (!changedIds.length) return;
 
-    setHighlightedMessageIds((current) => new Set([...current, ...newIds]));
+    setHighlightedMessageIds((current) => new Set([...current, ...changedIds]));
     window.setTimeout(() => {
       setHighlightedMessageIds((current) => {
         const next = new Set(current);
-        newIds.forEach((id) => next.delete(id));
+        changedIds.forEach((id) => next.delete(id));
         return next;
       });
     }, 1400);
@@ -2024,8 +2064,8 @@ function App() {
 
   function renderCodexActions(message: ChatMessage, job?: Job) {
     const jobId = messageJobId(message);
-    if (!job || job.id !== activeJob?.id || jobId !== activeJob.id) return null;
-    const actions = codexActionEntries(logs);
+    const webActions = job && job.id === activeJob?.id && jobId === activeJob.id ? codexActionEntries(logs) : [];
+    const actions = webActions.length ? webActions : metadataCodexActions(message);
     if (!actions.length) return null;
     const actionKey = `actions:${message.id}`;
     const expanded = Boolean(expandedActions[actionKey]);

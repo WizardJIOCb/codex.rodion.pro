@@ -29,6 +29,14 @@ type LocalChat = {
   messages: ChatMessage[];
 };
 
+type SyncedCodexAction = {
+  id: string;
+  command: string;
+  status: string;
+  output: string;
+  at: string;
+};
+
 export async function syncLocalChats(config: AgentConfig, send: Send): Promise<void> {
   const chats = [
     ...readCodexChats(config),
@@ -105,6 +113,8 @@ function readCodexRollout(path: string): ChatMessage[] {
   const lines = readFileSync(path, "utf8").split(/\r?\n/).filter(Boolean);
   const messages: ChatMessage[] = [];
   let lastChangeStat = "";
+  const actionsById = new Map<string, SyncedCodexAction>();
+  let pendingActions: SyncedCodexAction[] = [];
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
     if (!line) continue;
@@ -115,7 +125,21 @@ function readCodexRollout(path: string): ChatMessage[] {
       continue;
     }
     const createdAt = typeof row.timestamp === "string" ? row.timestamp : new Date().toISOString();
+    if (row.type === "response_item" && row.payload?.type === "function_call") {
+      const action = actionFromFunctionCall(row.payload, createdAt, index);
+      if (action) {
+        actionsById.set(action.id, action);
+        pendingActions.push(action);
+      }
+    }
     if (row.type === "response_item" && row.payload?.type === "function_call_output") {
+      const actionId = typeof row.payload.call_id === "string" ? row.payload.call_id : "";
+      const action = actionId ? actionsById.get(actionId) : undefined;
+      if (action) {
+        action.output = cleanActionOutput(row.payload.output);
+        action.status = action.output.match(/^Exit code:\s*0\b/im) || /Success\./i.test(action.output) ? "completed" : "failed";
+        action.at = createdAt;
+      }
       const changeStat = extractChangeStat(row.payload.output);
       if (changeStat) lastChangeStat = changeStat;
     }
@@ -125,6 +149,11 @@ function readCodexRollout(path: string): ChatMessage[] {
       const rawContent = textFromContent(row.payload.content);
       const content = cleanSyncedContent(rawContent, attachments);
       if (role && content && !isCodexContextMessage(content)) {
+        const metadata: Record<string, unknown> = { localPath: path };
+        if (role === "assistant" && pendingActions.length) {
+          metadata.codexActions = pendingActions.map((action) => ({ ...action }));
+          pendingActions = [];
+        }
         messages.push({
           role,
           content,
@@ -132,7 +161,7 @@ function readCodexRollout(path: string): ChatMessage[] {
           externalId: `${basename(path)}:${index}`,
           createdAt,
           attachments,
-          metadata: { localPath: path }
+          metadata
         });
       }
     }
@@ -143,6 +172,41 @@ function readCodexRollout(path: string): ChatMessage[] {
     lastAssistant.metadata = { ...lastAssistant.metadata, gitDiffStat: lastChangeStat };
   }
   return compacted;
+}
+
+function actionFromFunctionCall(payload: any, at: string, fallbackIndex: number): SyncedCodexAction | null {
+  const name = typeof payload.name === "string" ? payload.name : "tool";
+  if (!["shell_command", "apply_patch"].includes(name)) return null;
+  const id = typeof payload.call_id === "string" ? payload.call_id : `${name}:${fallbackIndex}`;
+  const command = name === "shell_command"
+    ? commandFromFunctionArguments(payload.arguments)
+    : "apply_patch";
+  return {
+    id,
+    command: command.slice(0, 500),
+    status: "running",
+    output: "",
+    at
+  };
+}
+
+function commandFromFunctionArguments(value: unknown): string {
+  if (typeof value !== "string") return "command";
+  try {
+    const parsed = JSON.parse(value) as { command?: unknown };
+    if (typeof parsed.command === "string" && parsed.command.trim()) return parsed.command.trim();
+  } catch {
+    // Fall through to a short raw representation.
+  }
+  return value.replace(/\s+/g, " ").trim() || "command";
+}
+
+function cleanActionOutput(value: unknown): string {
+  if (typeof value !== "string") return "";
+  return value
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .slice(0, 20000);
 }
 
 function extractChangeStat(output: unknown): string {
