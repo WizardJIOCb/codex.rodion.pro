@@ -1,5 +1,6 @@
 ﻿import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { useRef } from "react";
 import {
   Activity,
   ArrowLeft,
@@ -609,6 +610,12 @@ function App() {
   const online = agents.some((agent) => agent.status === "online");
   const localActivity = selectedAgent?.localActivity;
   const localCodexBusy = localActivity?.status === "busy" || Boolean(selectedAgent?.current_job_id);
+  const activeChatIdRef = useRef(activeChatId);
+  const activeJobIdRef = useRef(activeJob?.id ?? "");
+  const selectedRepoRef = useRef<Repo | undefined>(selectedRepo);
+  activeChatIdRef.current = activeChatId;
+  activeJobIdRef.current = activeJob?.id ?? "";
+  selectedRepoRef.current = selectedRepo;
   const activeProgress = activeJob ? progressByJob[activeJob.id] ?? {
     jobId: activeJob.id,
     phase: activeJob.status,
@@ -830,24 +837,64 @@ function App() {
   useEffect(() => {
     if (!csrf) return;
     const protocol = location.protocol === "https:" ? "wss" : "ws";
-    const ws = new WebSocket(`${protocol}://${location.host}/api/ui/ws`);
-    ws.onmessage = (event) => {
-      const message = JSON.parse(event.data);
-      if (message.type === "job.log") {
-        setLogs((current) => (activeJob?.id === message.jobId ? [...current, message] : current));
-      }
-      if (message.type === "job.progress") {
-        setProgressByJob((current) => ({ ...current, [message.jobId]: message }));
-      }
-      if (["job.updated", "job.created", "agent.status", "agent.activity", "repos.updated", "chats.updated"].includes(message.type)) {
-        refresh();
-        if (selectedRepo && message.type === "chats.updated" && message.repoId === selectedRepo.id) loadChats(selectedRepo);
-        if (message.jobId && activeJob?.id === message.jobId) loadJob(message.jobId);
-        if (activeChatId) loadChat(activeChatId);
-      }
+    let ws: WebSocket | undefined;
+    let reconnectTimer: number | undefined;
+    let closed = false;
+
+    const connect = () => {
+      ws = new WebSocket(`${protocol}://${location.host}/api/ui/ws`);
+      ws.onmessage = (event) => {
+        const message = JSON.parse(event.data);
+        if (message.type === "job.log") {
+          setLogs((current) => (activeJobIdRef.current === message.jobId ? [...current, message] : current));
+          return;
+        }
+        if (message.type === "job.progress") {
+          setProgressByJob((current) => ({ ...current, [message.jobId]: message }));
+          return;
+        }
+        if (message.type === "agent.activity") {
+          setAgents((current) => current.map((agent) => (
+            agent.id === message.agentId ? { ...agent, localActivity: message.localActivity } : agent
+          )));
+          return;
+        }
+        if (message.type === "agent.status") {
+          setAgents((current) => current.map((agent) => (
+            agent.id === message.agentId ? { ...agent, status: message.status } : agent
+          )));
+          return;
+        }
+        if (message.type === "repos.updated") {
+          setRepos((current) => {
+            const rest = current.filter((repo) => repo.agentId !== message.agentId);
+            return [...rest, ...message.repos.map((repo: Omit<Repo, "agentId">) => ({ ...repo, agentId: message.agentId }))];
+          });
+          return;
+        }
+        if (message.type === "chats.updated") {
+          const repo = selectedRepoRef.current;
+          if (repo && message.agentId === repo.agentId && message.repoId === repo.id) loadChats(repo);
+          if (activeChatIdRef.current) loadChat(activeChatIdRef.current);
+          return;
+        }
+        if (message.type === "job.created" || message.type === "job.updated") {
+          if (message.jobId && activeJobIdRef.current === message.jobId) loadJob(message.jobId);
+          if (activeChatIdRef.current) loadChat(activeChatIdRef.current);
+        }
+      };
+      ws.onclose = () => {
+        if (!closed) reconnectTimer = window.setTimeout(connect, 1500);
+      };
     };
-    return () => ws.close();
-  }, [csrf, activeJob?.id, activeChatId, selectedRepo?.id]);
+
+    connect();
+    return () => {
+      closed = true;
+      if (reconnectTimer) window.clearTimeout(reconnectTimer);
+      ws?.close();
+    };
+  }, [csrf]);
 
   useEffect(() => {
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => undefined);
