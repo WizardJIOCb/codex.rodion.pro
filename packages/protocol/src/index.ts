@@ -214,6 +214,10 @@ export const AgentToServerSchema = z.discriminatedUnion("type", [
 ]);
 export type AgentToServer = z.infer<typeof AgentToServerSchema>;
 
+export const CodexModelSchema = z.string().min(1).max(80);
+export const ReasoningEffortSchema = z.enum(["low", "medium", "high", "xhigh"]);
+export const CodexSpeedSchema = z.enum(["standard", "fast"]);
+
 export const ServerJobRunSchema = z.object({
   type: z.literal("job.run"),
   job: z.object({
@@ -226,6 +230,9 @@ export const ServerJobRunSchema = z.object({
     branchMode: z.enum(["current", "create-per-job"]).default("current"),
     kind: z.enum(["codex", "test"]).default("codex"),
     testCommandId: z.string().optional(),
+    model: CodexModelSchema.optional(),
+    reasoningEffort: ReasoningEffortSchema.optional(),
+    speed: CodexSpeedSchema.optional(),
     attachments: z.array(JobAttachmentSchema).max(8).default([])
   })
 });
@@ -320,6 +327,9 @@ export const CreateJobSchema = z.object({
   prompt: z.string().min(3).max(16000),
   sandbox: SandboxSchema,
   branchMode: z.enum(["current", "create-per-job"]).default("current"),
+  model: CodexModelSchema.optional(),
+  reasoningEffort: ReasoningEffortSchema.optional(),
+  speed: CodexSpeedSchema.optional(),
   attachments: z.array(JobAttachmentSchema).max(8).default([])
 });
 export type CreateJob = z.infer<typeof CreateJobSchema>;

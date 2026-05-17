@@ -82,6 +82,9 @@ export type JobRow = {
   prompt: string;
   sandbox: Sandbox;
   branch_mode: "current" | "create-per-job";
+  model: string | null;
+  reasoning_effort: "low" | "medium" | "high" | "xhigh" | null;
+  speed: "standard" | "fast" | null;
   kind: "codex" | "test";
   test_command_id: string | null;
   status: JobStatus;
@@ -215,6 +218,9 @@ export function openDb(path: string): DatabaseSync {
       prompt TEXT NOT NULL,
       sandbox TEXT NOT NULL,
       branch_mode TEXT NOT NULL,
+      model TEXT,
+      reasoning_effort TEXT,
+      speed TEXT,
       kind TEXT NOT NULL DEFAULT 'codex',
       test_command_id TEXT,
       status TEXT NOT NULL,
@@ -346,6 +352,15 @@ export function openDb(path: string): DatabaseSync {
   }
   if (!jobColumns.some((column) => column.name === "codex_thread_id")) {
     db.exec("ALTER TABLE jobs ADD COLUMN codex_thread_id TEXT");
+  }
+  if (!jobColumns.some((column) => column.name === "model")) {
+    db.exec("ALTER TABLE jobs ADD COLUMN model TEXT");
+  }
+  if (!jobColumns.some((column) => column.name === "reasoning_effort")) {
+    db.exec("ALTER TABLE jobs ADD COLUMN reasoning_effort TEXT");
+  }
+  if (!jobColumns.some((column) => column.name === "speed")) {
+    db.exec("ALTER TABLE jobs ADD COLUMN speed TEXT");
   }
   const repoColumns = db.prepare("PRAGMA table_info(repos)").all() as Array<{ name: string }>;
   if (!repoColumns.some((column) => column.name === "github_url")) {

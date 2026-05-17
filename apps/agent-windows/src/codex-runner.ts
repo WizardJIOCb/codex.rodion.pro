@@ -16,6 +16,9 @@ type RunContext = {
     branchMode: "current" | "create-per-job";
     kind: "codex" | "test";
     testCommandId?: string;
+    model?: string;
+    reasoningEffort?: "low" | "medium" | "high" | "xhigh";
+    speed?: "standard" | "fast";
     attachments?: Array<{
       name: string;
       mimeType: string;
@@ -93,21 +96,26 @@ export class Runner {
         "Use these file paths as the attached user-provided context."
       ].join("\n")
       : context.job.prompt;
+    const modelArgs = context.job.model ? ["-m", context.job.model] : [];
+    const reasoningArgs = context.job.reasoningEffort ? ["-c", `model_reasoning_effort="${context.job.reasoningEffort}"`] : [];
     const args = context.job.codexThreadId
       ? [
         ...codexCommand.prefixArgs,
         "exec",
         "resume",
+        ...modelArgs,
         "--all",
         "--json",
         "-c",
         "approval_policy=\"never\"",
+        ...reasoningArgs,
         context.job.codexThreadId,
         "-"
       ]
       : [
         ...codexCommand.prefixArgs,
         "exec",
+        ...modelArgs,
         "-C",
         repo.path,
         "--sandbox",
@@ -115,6 +123,7 @@ export class Runner {
         "--json",
         "-c",
         "approval_policy=\"never\"",
+        ...reasoningArgs,
         "-"
       ];
     return this.spawnAndCollect(context, repo, codexCommand.command, args, context.config.maxJobDurationMs, prompt);

@@ -37,12 +37,31 @@ import {
 import "./styles.css";
 
 type Sandbox = "read-only" | "workspace-write" | "danger-full-access";
+type ReasoningEffort = "low" | "medium" | "high" | "xhigh";
+type CodexSpeed = "standard" | "fast";
+
 const SANDBOXES: Sandbox[] = ["read-only", "workspace-write", "danger-full-access"];
 const SANDBOX_LABELS: Record<Sandbox, string> = {
   "read-only": "read-only",
   "workspace-write": "workspace-write",
   "danger-full-access": "full-access"
 };
+const REASONING_OPTIONS: Array<{ value: ReasoningEffort; label: string }> = [
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+  { value: "xhigh", label: "Extra High" }
+];
+const CODEX_MODEL_OPTIONS = [
+  { value: "gpt-5.5", label: "GPT-5.5" },
+  { value: "gpt-5.4", label: "GPT-5.4" },
+  { value: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
+  { value: "gpt-5.3-codex", label: "GPT-5.3 Codex" }
+];
+const SPEED_OPTIONS: Array<{ value: CodexSpeed; label: string; note: string }> = [
+  { value: "standard", label: "Standard", note: "Default speed, normal usage" },
+  { value: "fast", label: "Fast", note: "Saved with run metadata" }
+];
 
 type Agent = {
   id: string;
@@ -195,6 +214,9 @@ type Job = {
   repoId: string;
   prompt: string;
   sandbox: string;
+  model?: string | null;
+  reasoningEffort?: ReasoningEffort | null;
+  speed?: CodexSpeed | null;
   status: string;
   exitCode: number | null;
   finalMessage: string | null;
@@ -574,6 +596,9 @@ function App() {
   const [projectDeployCleanRemote, setProjectDeployCleanRemote] = useState(true);
   const [sandboxMenuOpen, setSandboxMenuOpen] = useState(false);
   const [actionMenuOpen, setActionMenuOpen] = useState(false);
+  const [codexModel, setCodexModel] = useState("gpt-5.5");
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>("high");
+  const [codexSpeed, setCodexSpeed] = useState<CodexSpeed>("standard");
   const [originalProjectPath, setOriginalProjectPath] = useState("");
   const [chatTitle, setChatTitle] = useState("");
   const [chatMenuId, setChatMenuId] = useState("");
@@ -855,6 +880,35 @@ function App() {
   }, [csrf]);
 
   useEffect(() => {
+    try {
+      const raw = localStorage.getItem("cmc.codexRunSettings");
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as { model?: string; reasoningEffort?: ReasoningEffort; speed?: CodexSpeed };
+      if (parsed.model && CODEX_MODEL_OPTIONS.some((option) => option.value === parsed.model)) setCodexModel(parsed.model);
+      if (parsed.reasoningEffort && REASONING_OPTIONS.some((option) => option.value === parsed.reasoningEffort)) setReasoningEffort(parsed.reasoningEffort);
+      if (parsed.speed && SPEED_OPTIONS.some((option) => option.value === parsed.speed)) setCodexSpeed(parsed.speed);
+    } catch {
+      try {
+        localStorage.removeItem("cmc.codexRunSettings");
+      } catch {
+        // Ignore blocked storage.
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("cmc.codexRunSettings", JSON.stringify({
+        model: codexModel,
+        reasoningEffort,
+        speed: codexSpeed
+      }));
+    } catch {
+      // The settings are just a UI convenience; a blocked storage write should not break chat.
+    }
+  }, [codexModel, reasoningEffort, codexSpeed]);
+
+  useEffect(() => {
     if (!csrf) return;
     const protocol = location.protocol === "https:" ? "wss" : "ws";
     let ws: WebSocket | undefined;
@@ -1091,6 +1145,9 @@ function App() {
         prompt: promptText,
         sandbox,
         branchMode: "current",
+        model: codexModel,
+        reasoningEffort,
+        speed: codexSpeed,
         attachments: attachments.map((attachment) => ({
           name: attachment.name,
           mimeType: attachment.mimeType,
@@ -1617,6 +1674,9 @@ function App() {
     if (!selectedRepo) return null;
     const canSubmit = Boolean(prompt.trim() || attachments.length);
     const runDisabled = busy || !canSubmit || localCodexBusy || activeRunBusy;
+    const selectedModelLabel = CODEX_MODEL_OPTIONS.find((option) => option.value === codexModel)?.label ?? codexModel;
+    const selectedReasoningLabel = REASONING_OPTIONS.find((option) => option.value === reasoningEffort)?.label ?? reasoningEffort;
+    const selectedSpeedLabel = SPEED_OPTIONS.find((option) => option.value === codexSpeed)?.label ?? codexSpeed;
     return (
       <form className="composer" onSubmit={createJob}>
         {(localCodexBusy || activeRunBusy) && (
@@ -1711,6 +1771,61 @@ function App() {
                   <UploadCloud size={16} />
                   <span>Commit & push</span>
                 </button>
+                <div className="menu-divider" />
+                <div className="menu-section">
+                  <span className="menu-section-title">Intelligence</span>
+                  {REASONING_OPTIONS.map((option) => (
+                    <button
+                      className={reasoningEffort === option.value ? "selected" : ""}
+                      key={option.value}
+                      role="menuitemcheckbox"
+                      aria-checked={reasoningEffort === option.value}
+                      type="button"
+                      onClick={() => setReasoningEffort(option.value)}
+                    >
+                      <span>{option.label}</span>
+                      {reasoningEffort === option.value && <Check size={15} />}
+                    </button>
+                  ))}
+                </div>
+                <div className="menu-section">
+                  <span className="menu-section-title">Model</span>
+                  {CODEX_MODEL_OPTIONS.map((option) => (
+                    <button
+                      className={codexModel === option.value ? "selected" : ""}
+                      key={option.value}
+                      role="menuitemcheckbox"
+                      aria-checked={codexModel === option.value}
+                      type="button"
+                      onClick={() => setCodexModel(option.value)}
+                    >
+                      <span>{option.label}</span>
+                      {codexModel === option.value && <Check size={15} />}
+                    </button>
+                  ))}
+                </div>
+                <div className="menu-section">
+                  <span className="menu-section-title">Speed</span>
+                  {SPEED_OPTIONS.map((option) => (
+                    <button
+                      className={`speed-option ${codexSpeed === option.value ? "selected" : ""}`}
+                      key={option.value}
+                      role="menuitemcheckbox"
+                      aria-checked={codexSpeed === option.value}
+                      type="button"
+                      onClick={() => setCodexSpeed(option.value)}
+                    >
+                      <span>
+                        <strong>{option.label}</strong>
+                        <small>{option.note}</small>
+                      </span>
+                      {codexSpeed === option.value && <Check size={15} />}
+                    </button>
+                  ))}
+                </div>
+                <div className="menu-summary">
+                  {selectedModelLabel} · {selectedReasoningLabel} · {selectedSpeedLabel}
+                </div>
               </div>
             )}
           </div>

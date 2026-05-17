@@ -714,6 +714,9 @@ function dispatchQueue(agentId: string): void {
       branchMode: job.branch_mode,
       kind: job.kind,
       testCommandId: job.test_command_id ?? undefined,
+      model: job.model ?? undefined,
+      reasoningEffort: job.reasoning_effort ?? undefined,
+      speed: job.speed ?? undefined,
       attachments: (db.prepare("SELECT * FROM job_attachments WHERE job_id = ? ORDER BY created_at ASC").all(job.id) as AttachmentRow[])
         .map((attachment) => ({
           name: attachment.name,
@@ -743,6 +746,9 @@ function serializeJob(job: JobRow) {
     prompt: job.prompt,
     sandbox: job.sandbox,
     branchMode: job.branch_mode,
+    model: job.model,
+    reasoningEffort: job.reasoning_effort,
+    speed: job.speed,
     kind: job.kind,
     testCommandId: job.test_command_id,
     status: job.status,
@@ -1593,9 +1599,23 @@ async function createApp(): Promise<FastifyInstance> {
     const createdAt = nowIso();
     const promptMessageId = id("msg");
     db.prepare(`
-      INSERT INTO jobs (id,chat_id,agent_id,repo_id,prompt,sandbox,branch_mode,kind,status,created_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?)
-    `).run(jobId, chatId, parsed.data.agentId, parsed.data.repoId, parsed.data.prompt, parsed.data.sandbox, parsed.data.branchMode, "codex", "queued", createdAt);
+      INSERT INTO jobs (id,chat_id,agent_id,repo_id,prompt,sandbox,branch_mode,model,reasoning_effort,speed,kind,status,created_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+    `).run(
+      jobId,
+      chatId,
+      parsed.data.agentId,
+      parsed.data.repoId,
+      parsed.data.prompt,
+      parsed.data.sandbox,
+      parsed.data.branchMode,
+      parsed.data.model ?? null,
+      parsed.data.reasoningEffort ?? null,
+      parsed.data.speed ?? null,
+      "codex",
+      "queued",
+      createdAt
+    );
     appendChatMessage({
       id: promptMessageId,
       chat_id: chatId,
@@ -1603,7 +1623,12 @@ async function createApp(): Promise<FastifyInstance> {
       content: parsed.data.prompt,
       source: "web",
       external_id: `job:${jobId}:prompt`,
-      metadata_json: JSON.stringify({ jobId }),
+      metadata_json: JSON.stringify({
+        jobId,
+        model: parsed.data.model,
+        reasoningEffort: parsed.data.reasoningEffort,
+        speed: parsed.data.speed
+      }),
       created_at: createdAt
     });
     storeJobAttachments(jobId, promptMessageId, parsed.data.attachments, createdAt);

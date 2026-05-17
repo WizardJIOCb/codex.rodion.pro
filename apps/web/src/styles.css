@@ -1019,7 +1019,9 @@ textarea:focus {
 }
 
 .action-menu {
-  width: 230px;
+  width: 270px;
+  max-height: min(70vh, 560px);
+  overflow: auto;
 }
 
 .sticky-submit .sandbox-menu button,
@@ -1036,13 +1038,62 @@ textarea:focus {
 
 .sticky-submit .sandbox-menu button:hover,
 .sticky-submit .sandbox-menu button.selected,
-.sticky-submit .action-menu button:hover {
+.sticky-submit .action-menu button:hover,
+.sticky-submit .action-menu button.selected {
   background: var(--panel-2);
 }
 
 .sticky-submit .action-menu button {
-  justify-content: flex-start;
+  justify-content: space-between;
   gap: 8px;
+}
+
+.sticky-submit .action-menu > button:first-child {
+  justify-content: flex-start;
+}
+
+.menu-divider {
+  height: 1px;
+  margin: 3px 0;
+  background: var(--line);
+}
+
+.menu-section {
+  display: grid;
+  gap: 2px;
+}
+
+.menu-section-title {
+  padding: 5px 9px 2px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.sticky-submit .action-menu .speed-option {
+  align-items: flex-start;
+}
+
+.sticky-submit .action-menu .speed-option span {
+  display: grid;
+  gap: 2px;
+  text-align: left;
+}
+
+.sticky-submit .action-menu .speed-option small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.menu-summary {
+  margin-top: 3px;
+  padding: 7px 9px;
+  border-radius: 6px;
+  color: var(--muted);
+  background: var(--panel-2);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .sticky-submit .run-button {
