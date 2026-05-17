@@ -2302,6 +2302,24 @@ button:disabled {
 }
 
 @media (max-width: 820px) {
+  .file-diff-panel {
+    font-size: 10.5px;
+    line-height: 1.35;
+  }
+
+  .file-diff-line {
+    grid-template-columns: 34px 34px minmax(0, 1fr);
+    min-width: 520px;
+  }
+
+  .file-diff-line .line-number {
+    padding: 2px 5px;
+  }
+
+  .file-diff-line code {
+    padding: 2px 7px;
+  }
+
   html,
   body,
   #root {
