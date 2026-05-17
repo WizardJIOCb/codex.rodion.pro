@@ -10,6 +10,7 @@ import {
   Check,
   CheckCircle2,
   ChevronDown,
+  ArrowDown,
   Clock3,
   FolderGit2,
   Github,
@@ -330,9 +331,10 @@ function formatDuration(totalSeconds: number) {
   const seconds = Math.max(0, Math.floor(totalSeconds));
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
-  if (hours) return `${hours}h ${minutes}m`;
-  if (minutes) return `${minutes}m`;
-  return `${seconds}s`;
+  const remainingSeconds = seconds % 60;
+  if (hours) return `${hours}h ${minutes}m ${remainingSeconds}s`;
+  if (minutes) return `${minutes}m ${remainingSeconds}s`;
+  return `${remainingSeconds}s`;
 }
 
 function isPreviewableImage(mimeType: string) {
@@ -754,6 +756,8 @@ function App() {
   const [expandedActions, setExpandedActions] = useState<Record<string, boolean>>({});
   const [nowTick, setNowTick] = useState(() => Date.now());
   const [localBusyHold, setLocalBusyHold] = useState<{ until: number; since?: string }>({ until: 0 });
+  const [highlightedMessageIds, setHighlightedMessageIds] = useState<Set<string>>(() => new Set());
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
 
   const selectedRepo = useMemo(() => repos.find((repo) => `${repo.agentId}:${repo.id}` === repoKey), [repoKey, repos]);
   const activeChat = useMemo(() => chats.find((chat) => chat.id === activeChatId), [activeChatId, chats]);
@@ -788,6 +792,11 @@ function App() {
   const loadJobTimerRef = useRef<number | undefined>(undefined);
   const loadChatsAbortRef = useRef<AbortController | null>(null);
   const loadChatAbortRef = useRef<AbortController | null>(null);
+  const shellRef = useRef<HTMLElement | null>(null);
+  const lastMessageRef = useRef<HTMLElement | null>(null);
+  const currentScrollChatRef = useRef("");
+  const previousMessageIdsRef = useRef<Set<string>>(new Set());
+  const chatAtBottomRef = useRef(true);
   activeChatIdRef.current = activeChatId;
   activeJobIdRef.current = activeJob?.id ?? "";
   selectedRepoRef.current = selectedRepo;
@@ -802,6 +811,22 @@ function App() {
     at: new Date().toISOString()
   } : null;
   const firstActiveProgressFile = activeProgress?.files?.[0];
+
+  function updateChatBottomState() {
+    const shell = shellRef.current;
+    if (!shell) return;
+    const distanceToBottom = shell.scrollHeight - shell.scrollTop - shell.clientHeight;
+    const atBottom = distanceToBottom < 120;
+    chatAtBottomRef.current = atBottom;
+    if (atBottom) setShowJumpToLatest(false);
+  }
+
+  function scrollChatToLatest(behavior: ScrollBehavior = "smooth") {
+    const target = lastMessageRef.current ?? shellRef.current;
+    target?.scrollIntoView({ behavior, block: "end" });
+    chatAtBottomRef.current = true;
+    setShowJumpToLatest(false);
+  }
 
   async function refresh() {
     const [agentResponse, repoResponse] = await Promise.all([api("/api/agents"), api("/api/repos")]);
@@ -1179,6 +1204,38 @@ function App() {
     const timer = window.setInterval(() => setNowTick(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [localCodexBusy, activeRunBusy]);
+
+  useEffect(() => {
+    const messageIds = messages.map((message) => message.id);
+    const nextIds = new Set(messageIds);
+
+    if (currentScrollChatRef.current !== activeChatId) {
+      currentScrollChatRef.current = activeChatId;
+      previousMessageIdsRef.current = nextIds;
+      setHighlightedMessageIds(new Set());
+      setShowJumpToLatest(false);
+      window.requestAnimationFrame(() => scrollChatToLatest("auto"));
+      return;
+    }
+
+    const newIds = messageIds.filter((id) => !previousMessageIdsRef.current.has(id));
+    previousMessageIdsRef.current = nextIds;
+    if (!newIds.length) return;
+
+    setHighlightedMessageIds((current) => new Set([...current, ...newIds]));
+    window.setTimeout(() => {
+      setHighlightedMessageIds((current) => {
+        const next = new Set(current);
+        newIds.forEach((id) => next.delete(id));
+        return next;
+      });
+    }, 1400);
+
+    window.requestAnimationFrame(() => {
+      if (chatAtBottomRef.current) scrollChatToLatest("smooth");
+      else setShowJumpToLatest(true);
+    });
+  }, [activeChatId, messages]);
 
   useEffect(() => {
     if (!imagePreview) return;
@@ -2252,7 +2309,7 @@ function App() {
         </div>
       </aside>
 
-      <section className="shell">
+      <section className="shell" ref={shellRef} onScroll={updateChatBottomState}>
       <header className="topbar">
         <div>
           <span className={`status ${online ? "ok" : "bad"}`}>{online ? <Wifi size={16} /> : <WifiOff size={16} />} {online ? "Home PC online" : "Home PC offline"}</span>
@@ -2439,12 +2496,18 @@ function App() {
                 <section className="workspace">
                   <section className="job-detail">
                     <section className="chat-thread">
-                      {messages.length ? messages.map((message) => {
+                      {messages.length ? messages.map((message, index) => {
                         const jobId = messageJobId(message);
                         const messageJob = jobs.find((job) => job.id === jobId);
                         const messageProgress = jobId ? progressByJob[jobId] ?? null : null;
+                        const isNew = highlightedMessageIds.has(message.id);
+                        const isLast = index === messages.length - 1;
                         return (
-                          <article className={`message ${message.role}`} key={message.id}>
+                          <article
+                            className={`message ${message.role}${isNew ? " new-message" : ""}`}
+                            key={message.id}
+                            ref={isLast ? lastMessageRef : undefined}
+                          >
                             <div className="message-meta">
                               <span>{message.role === "user" ? "You" : message.source === "vscode" ? "VS Code" : "Codex"}</span>
                               <small>{new Date(message.createdAt).toLocaleString()}</small>
@@ -2463,6 +2526,12 @@ function App() {
                         );
                       }) : (
                         <div className="empty">Начни этот чат или дождись синхронизации истории из локального Codex/VS Code.</div>
+                      )}
+                      {showJumpToLatest && (
+                        <button className="jump-to-latest" type="button" onClick={() => scrollChatToLatest("smooth")}>
+                          <ArrowDown size={18} />
+                          <span>Новое сообщение</span>
+                        </button>
                       )}
                     </section>
                     {renderComposer()}
