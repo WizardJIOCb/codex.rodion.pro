@@ -104,6 +104,7 @@ function readCodexRollout(path: string): ChatMessage[] {
   if (!path || !existsSync(path)) return [];
   const lines = readFileSync(path, "utf8").split(/\r?\n/).filter(Boolean);
   const messages: ChatMessage[] = [];
+  let lastChangeStat = "";
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
     if (!line) continue;
@@ -114,6 +115,10 @@ function readCodexRollout(path: string): ChatMessage[] {
       continue;
     }
     const createdAt = typeof row.timestamp === "string" ? row.timestamp : new Date().toISOString();
+    if (row.type === "response_item" && row.payload?.type === "function_call_output") {
+      const changeStat = extractChangeStat(row.payload.output);
+      if (changeStat) lastChangeStat = changeStat;
+    }
     if (row.type === "response_item" && row.payload?.type === "message") {
       const role = normalizeRole(row.payload.role);
       const attachments = collectImageAttachments(row.payload.content);
@@ -132,7 +137,52 @@ function readCodexRollout(path: string): ChatMessage[] {
       }
     }
   }
-  return compactMessages(messages);
+  const compacted = compactMessages(messages);
+  const lastAssistant = [...compacted].reverse().find((message) => message.role === "assistant");
+  if (lastAssistant && lastChangeStat && typeof lastAssistant.metadata?.gitDiffStat !== "string") {
+    lastAssistant.metadata = { ...lastAssistant.metadata, gitDiffStat: lastChangeStat };
+  }
+  return compacted;
+}
+
+function extractChangeStat(output: unknown): string {
+  if (typeof output !== "string" || !/diff --git|\|\s+\d+|files? changed/i.test(output)) return "";
+  const normalized = output.replace(/\r\n/g, "\n");
+  const statLines = normalized
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .filter((line) => /^\s*\S.*\s+\|\s+\d+/.test(line));
+  if (statLines.length) return statLines.join("\n").slice(0, 12000);
+
+  const diffRows = diffStatFromPatch(normalized);
+  if (diffRows.length) return diffRows.join("\n").slice(0, 12000);
+  return "";
+}
+
+function diffStatFromPatch(output: string): string[] {
+  const stats = new Map<string, { added: number; deleted: number }>();
+  let currentFile = "";
+  for (const line of output.split("\n")) {
+    const diff = line.match(/^diff --git a\/(.+?) b\/(.+)$/);
+    if (diff) {
+      currentFile = diff[2] || diff[1] || "";
+      if (currentFile && !stats.has(currentFile)) stats.set(currentFile, { added: 0, deleted: 0 });
+      continue;
+    }
+    if (!currentFile) continue;
+    const current = stats.get(currentFile);
+    if (!current) continue;
+    if (line.startsWith("+++") || line.startsWith("---")) continue;
+    if (line.startsWith("+")) current.added += 1;
+    if (line.startsWith("-")) current.deleted += 1;
+  }
+  return [...stats.entries()]
+    .filter(([, stat]) => stat.added || stat.deleted)
+    .map(([file, stat]) => {
+      const changed = stat.added + stat.deleted;
+      const bars = `${"+".repeat(stat.added)}${"-".repeat(stat.deleted)}`;
+      return ` ${file} | ${changed} ${bars}`;
+    });
 }
 
 function isCodexContextMessage(content: string): boolean {

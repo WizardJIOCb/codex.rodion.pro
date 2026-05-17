@@ -772,7 +772,23 @@ function App() {
   const activeRunBusy = Boolean(activeJob && ["queued", "assigned", "running"].includes(activeJob.status) && !activeJobFinalMessageSeen);
   const staleCurrentWebJob = Boolean(selectedAgent?.current_job_id && selectedAgent.current_job_id === activeJob?.id && !activeRunBusy);
   const staleLocalWebBusy = Boolean(localActivity?.source === "codex.rodion.pro" && !activeRunBusy && activeJob?.finishedAt);
-  const rawLocalCodexBusy = Boolean((localActivity?.status === "busy" || selectedAgent?.current_job_id) && !staleCurrentWebJob && !staleLocalWebBusy);
+  const latestLocalAssistantMessageAt = Math.max(0, ...messages
+    .filter((message) => message.role === "assistant" && (message.source === "codex" || message.source === "vscode"))
+    .map((message) => Date.parse(message.createdAt))
+    .filter(Number.isFinite));
+  const localActivityUpdatedAt = Date.parse(localActivity?.updatedAt || "");
+  const localFinalMessageLikelySeen = Boolean(
+    latestLocalAssistantMessageAt
+    && Number.isFinite(localActivityUpdatedAt)
+    && latestLocalAssistantMessageAt >= localActivityUpdatedAt - 1000
+    && nowTick - Math.max(latestLocalAssistantMessageAt, localActivityUpdatedAt) > 12000
+  );
+  const rawLocalCodexBusy = Boolean(
+    (localActivity?.status === "busy" || selectedAgent?.current_job_id)
+    && !staleCurrentWebJob
+    && !staleLocalWebBusy
+    && !localFinalMessageLikelySeen
+  );
   const localCodexBusy = rawLocalCodexBusy || localBusyHold.until > nowTick;
   const localBusySince = rawLocalCodexBusy
     ? localActivity?.busySinceAt || localBusyHold.since || localActivity?.updatedAt || localActivity?.detectedAt
