@@ -963,7 +963,7 @@ textarea:focus {
   position: sticky;
   bottom: max(8px, env(safe-area-inset-bottom));
   display: grid;
-  grid-template-columns: auto auto auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto auto auto;
   gap: 6px;
   align-items: center;
   overflow: visible;
@@ -1570,6 +1570,74 @@ h2 {
   font-weight: 800;
 }
 
+.completion-card {
+  display: grid;
+  gap: 9px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.completion-head,
+.completion-stats,
+.completion-files div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.completion-head {
+  justify-content: space-between;
+}
+
+.completion-stats {
+  flex-wrap: wrap;
+}
+
+.completion-stats span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #f8f8f5;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.completion-stats span:nth-child(2) {
+  color: var(--accent-2);
+}
+
+.completion-stats span:nth-child(3) {
+  color: var(--danger);
+}
+
+.completion-files {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+
+.completion-files div {
+  justify-content: space-between;
+  min-width: 0;
+  padding: 8px 10px;
+}
+
+.completion-files div + div {
+  border-top: 1px solid var(--line);
+}
+
+.completion-files span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 pre {
   margin: 0;
   white-space: pre-wrap;
@@ -1908,7 +1976,7 @@ button:disabled {
   }
 
   .sticky-submit {
-    grid-template-columns: auto auto auto minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) auto auto auto;
   }
 
   .sticky-submit .stop {

@@ -350,6 +350,40 @@ function diffRows(stat: string | null) {
     .slice(0, 8);
 }
 
+function diffSummary(stat: string | null, fallback?: { filesChanged?: number; added?: number; deleted?: number } | null) {
+  const rows = stat
+    ? stat
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const match = line.match(/^(.*?)\s+\|\s+(\d+)\s+([+\-]+)?/);
+        return {
+          file: match?.[1]?.trim() || line,
+          changed: Number(match?.[2] ?? 0),
+          bars: match?.[3] ?? ""
+        };
+      })
+    : [];
+  const fromRows = rows.reduce((total, row) => ({
+    files: total.files + 1,
+    added: total.added + [...row.bars].filter((char) => char === "+").length,
+    deleted: total.deleted + [...row.bars].filter((char) => char === "-").length
+  }), { files: 0, added: 0, deleted: 0 });
+  return {
+    files: Math.max(fromRows.files, fallback?.filesChanged || 0),
+    added: Math.max(fromRows.added, fallback?.added || 0),
+    deleted: Math.max(fromRows.deleted, fallback?.deleted || 0)
+  };
+}
+
+function jobDurationSeconds(job: Job) {
+  const start = Date.parse(job.startedAt || job.createdAt);
+  const finish = Date.parse(job.finishedAt || new Date().toISOString());
+  if (!Number.isFinite(start) || !Number.isFinite(finish)) return 0;
+  return Math.max(0, Math.floor((finish - start) / 1000));
+}
+
 function normalizeDisplayText(value: string) {
   return value
     .replace(/\r\n/g, "\n")
@@ -640,18 +674,23 @@ function App() {
   const [imagePreview, setImagePreview] = useState<ImagePreview | null>(null);
   const [expandedActions, setExpandedActions] = useState<Record<string, boolean>>({});
   const [nowTick, setNowTick] = useState(() => Date.now());
+  const [localBusyHold, setLocalBusyHold] = useState<{ until: number; since?: string }>({ until: 0 });
 
   const selectedRepo = useMemo(() => repos.find((repo) => `${repo.agentId}:${repo.id}` === repoKey), [repoKey, repos]);
   const activeChat = useMemo(() => chats.find((chat) => chat.id === activeChatId), [activeChatId, chats]);
   const selectedAgent = agents.find((agent) => agent.status === "online") ?? agents[0];
   const online = agents.some((agent) => agent.status === "online");
   const localActivity = selectedAgent?.localActivity;
-  const localCodexBusy = localActivity?.status === "busy" || Boolean(selectedAgent?.current_job_id);
+  const rawLocalCodexBusy = localActivity?.status === "busy" || Boolean(selectedAgent?.current_job_id);
+  const localCodexBusy = rawLocalCodexBusy || localBusyHold.until > nowTick;
   const activeRunBusy = Boolean(activeJob && ["queued", "assigned", "running"].includes(activeJob.status));
+  const localBusySince = rawLocalCodexBusy
+    ? localActivity?.busySinceAt || localBusyHold.since || localActivity?.updatedAt || localActivity?.detectedAt
+    : localBusyHold.since;
   const thinkingSince = activeRunBusy
     ? activeJob?.startedAt || activeJob?.createdAt
     : localCodexBusy
-      ? localActivity?.busySinceAt || localActivity?.updatedAt || localActivity?.detectedAt
+      ? localBusySince
       : undefined;
   const thinkingSeconds = thinkingSince ? Math.max(0, Math.floor((nowTick - Date.parse(thinkingSince)) / 1000)) : 0;
   const thinkingChatId = activeRunBusy ? activeJob?.chatId : localCodexBusy ? activeChatId : undefined;
@@ -977,6 +1016,28 @@ function App() {
   useEffect(() => {
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    const now = Date.now();
+    if (rawLocalCodexBusy) {
+      const detectedAt = localActivity?.busySinceAt || localActivity?.updatedAt || localActivity?.detectedAt || new Date(now).toISOString();
+      setLocalBusyHold((current) => ({
+        until: now + 7000,
+        since: current.until > now ? current.since ?? detectedAt : detectedAt
+      }));
+      return;
+    }
+    if (localBusyHold.until <= now && localBusyHold.since) setLocalBusyHold({ until: 0 });
+  }, [
+    rawLocalCodexBusy,
+    localActivity?.busySinceAt,
+    localActivity?.updatedAt,
+    localActivity?.detectedAt,
+    selectedAgent?.current_job_id,
+    nowTick,
+    localBusyHold.until,
+    localBusyHold.since
+  ]);
 
   useEffect(() => {
     if (!localCodexBusy && !activeRunBusy) return;
@@ -1670,6 +1731,37 @@ function App() {
     setCurrentUser(null);
   }
 
+  function renderJobCompletion(job: Job, progress: JobProgress | null) {
+    if (!job.finishedAt || ["queued", "assigned", "running"].includes(job.status)) return null;
+    const summary = diffSummary(job.gitDiffStat, progress);
+    const rows = diffRows(job.gitDiffStat);
+    return (
+      <div className="completion-card">
+        <div className="completion-head">
+          <span className={`pill ${job.status}`}><CheckCircle2 size={15} /> {job.status}</span>
+          <strong>Работал {formatDuration(jobDurationSeconds(job))}</strong>
+        </div>
+        <div className="completion-stats">
+          <span><Wrench size={15} /> {summary.files} файлов</span>
+          <span>+{summary.added}</span>
+          <span>-{summary.deleted}</span>
+        </div>
+        {rows.length ? (
+          <div className="completion-files">
+            {rows.map((row) => (
+              <div key={row.file}>
+                <span>{row.file}</span>
+                <small>{row.changed} {row.bars}</small>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <small>Файлы не изменены.</small>
+        )}
+      </div>
+    );
+  }
+
   function renderComposer() {
     if (!selectedRepo) return null;
     const canSubmit = Boolean(prompt.trim() || attachments.length);
@@ -1677,14 +1769,9 @@ function App() {
     const selectedModelLabel = CODEX_MODEL_OPTIONS.find((option) => option.value === codexModel)?.label ?? codexModel;
     const selectedReasoningLabel = REASONING_OPTIONS.find((option) => option.value === reasoningEffort)?.label ?? reasoningEffort;
     const selectedSpeedLabel = SPEED_OPTIONS.find((option) => option.value === codexSpeed)?.label ?? codexSpeed;
+    const showCodexBusy = localCodexBusy || activeRunBusy;
     return (
       <form className="composer" onSubmit={createJob}>
-        {(localCodexBusy || activeRunBusy) && (
-          <div className="thinking-strip">
-            <RefreshCw className="spin" size={15} />
-            <span>Codex думает {formatDuration(thinkingSeconds)}</span>
-          </div>
-        )}
         {attachments.length > 0 && (
           <div className="attachment-list">
             {attachments.map((attachment) => (
@@ -1719,6 +1806,10 @@ function App() {
               event.currentTarget.value = "";
             }}
           />
+          <button className="run-button" disabled={runDisabled} type="submit">
+            {showCodexBusy ? <RefreshCw className="spin" size={18} /> : <Play size={18} />}
+            {showCodexBusy ? `Codex занят ${formatDuration(thinkingSeconds)}` : "Отправить"}
+          </button>
           <label className="attachment-picker" htmlFor="composer-attachment-input" title="Attach files">
             <Paperclip size={18} />
           </label>
@@ -1829,10 +1920,6 @@ function App() {
               </div>
             )}
           </div>
-          <button className="run-button" disabled={runDisabled} type="submit">
-            {localCodexBusy ? <RefreshCw className="spin" size={18} /> : <Play size={18} />}
-            {localCodexBusy ? "Codex busy" : "Run Codex"}
-          </button>
           {activeJob && ["queued", "assigned", "running"].includes(activeJob.status) && (
             <button className="stop" type="button" onClick={cancelJob}><Square size={18} /> Stop</button>
           )}
@@ -2191,6 +2278,7 @@ function App() {
                             </div>
                           </div>
                         )}
+                        {renderJobCompletion(activeJob, activeProgress)}
                         {activeJob.gitDiffStat && (
                           <div className="edited-card">
                             <div className="edited-head">
