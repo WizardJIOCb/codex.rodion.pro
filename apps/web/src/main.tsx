@@ -434,6 +434,28 @@ function findFileDiffInList(fileDiffs: FileDiff[], file: string) {
   return fileDiffs.find((item) => item.file.replace(/\\/g, "/") === normalized);
 }
 
+function diffRowsFromFileDiffs(fileDiffs: FileDiff[]): DiffRow[] {
+  return fileDiffs.map((fileDiff) => {
+    const added = fileDiff.lines.filter((line) => line.type === "added").length;
+    const deleted = fileDiff.lines.filter((line) => line.type === "deleted").length;
+    return {
+      file: fileDiff.file,
+      changed: added + deleted,
+      bars: "",
+      added,
+      deleted
+    };
+  }).filter((row) => row.changed > 0);
+}
+
+function diffSummaryFromRows(rows: DiffRow[]) {
+  return rows.reduce((total, row) => ({
+    files: total.files + 1,
+    added: total.added + row.added,
+    deleted: total.deleted + row.deleted
+  }), { files: 0, added: 0, deleted: 0 });
+}
+
 function diffRows(stat: string | null, fallbackFiles?: JobProgress["files"], limit = 8): DiffRow[] {
   const fallbackRows = progressDiffRows(fallbackFiles);
   if (!stat) return fallbackRows;
@@ -461,11 +483,7 @@ function diffRows(stat: string | null, fallbackFiles?: JobProgress["files"], lim
 function diffSummary(stat: string | null, fallback?: { filesChanged?: number; added?: number; deleted?: number; files?: JobProgress["files"] } | null) {
   const rows = diffRows(stat, fallback?.files, Number.POSITIVE_INFINITY);
   const statSummary = stat?.match(/(\d+)\s+files?\s+changed(?:,\s+(\d+)\s+insertions?\(\+\))?(?:,\s+(\d+)\s+deletions?\(-\))?/i);
-  const fromRows = rows.reduce((total, row) => ({
-    files: total.files + 1,
-    added: total.added + row.added,
-    deleted: total.deleted + row.deleted
-  }), { files: 0, added: 0, deleted: 0 });
+  const fromRows = diffSummaryFromRows(rows);
   return {
     files: Math.max(Number(statSummary?.[1] ?? 0), fromRows.files, fallback?.filesChanged || 0),
     added: Math.max(Number(statSummary?.[2] ?? 0), fromRows.added, fallback?.added || 0),
@@ -2108,9 +2126,10 @@ function App() {
     const stat = job?.gitDiffStat || (typeof message.metadata?.gitDiffStat === "string" ? message.metadata.gitDiffStat : "");
     const diff = job?.gitDiff || (typeof message.metadata?.gitDiff === "string" ? message.metadata.gitDiff : "");
     if (message.role !== "assistant" || (!stat && !progress?.files?.length)) return null;
-    const rows = diffRows(stat || null, progress?.files);
     const fileDiffs = parseUnifiedDiff(diff);
-    const summary = diffSummary(stat || null, progress);
+    const exactRows = diffRowsFromFileDiffs(fileDiffs);
+    const rows = exactRows.length ? exactRows : diffRows(stat || null, progress?.files);
+    const summary = exactRows.length ? diffSummaryFromRows(exactRows) : diffSummary(stat || null, progress);
     const actionKey = `changes:${message.id}`;
     const expanded = Boolean(expandedActions[actionKey]);
     const durationSeconds = job?.finishedAt ? jobDurationSeconds(job) : messageDurationSeconds(message);
