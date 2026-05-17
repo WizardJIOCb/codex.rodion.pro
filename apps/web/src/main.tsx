@@ -727,6 +727,8 @@ function App() {
   const loadChatsTimerRef = useRef<number | undefined>(undefined);
   const loadChatTimerRef = useRef<number | undefined>(undefined);
   const loadJobTimerRef = useRef<number | undefined>(undefined);
+  const loadChatsAbortRef = useRef<AbortController | null>(null);
+  const loadChatAbortRef = useRef<AbortController | null>(null);
   activeChatIdRef.current = activeChatId;
   activeJobIdRef.current = activeJob?.id ?? "";
   selectedRepoRef.current = selectedRepo;
@@ -778,9 +780,18 @@ function App() {
   }
 
   async function loadChats(repo: Repo, selectFirst = false) {
-    const response = await api(`/api/chats?agentId=${encodeURIComponent(repo.agentId)}&repoId=${encodeURIComponent(repo.id)}`);
-    if (!response.ok) return;
+    loadChatsAbortRef.current?.abort();
+    const controller = new AbortController();
+    loadChatsAbortRef.current = controller;
+    const response = await api(`/api/chats?agentId=${encodeURIComponent(repo.agentId)}&repoId=${encodeURIComponent(repo.id)}`, { signal: controller.signal });
+    if (loadChatsAbortRef.current !== controller) return;
+    if (!response.ok) {
+      loadChatsAbortRef.current = null;
+      return;
+    }
     const nextChats = (await response.json()).chats;
+    if (loadChatsAbortRef.current !== controller) return;
+    loadChatsAbortRef.current = null;
     setChats(nextChats);
     if (selectFirst && nextChats[0]) {
       await loadChat(nextChats[0].id);
@@ -803,9 +814,18 @@ function App() {
   }
 
   async function loadChat(chatId: string, preferredJobId?: string) {
-    const response = await api(`/api/chats/${chatId}`);
-    if (!response.ok) return;
+    loadChatAbortRef.current?.abort();
+    const controller = new AbortController();
+    loadChatAbortRef.current = controller;
+    const response = await api(`/api/chats/${chatId}`, { signal: controller.signal });
+    if (loadChatAbortRef.current !== controller) return;
+    if (!response.ok) {
+      loadChatAbortRef.current = null;
+      return;
+    }
     const data = await response.json();
+    if (loadChatAbortRef.current !== controller) return;
+    loadChatAbortRef.current = null;
     setChats((current) => {
       const withoutLoaded = current.filter((chat) => chat.id !== data.chat.id);
       return [data.chat, ...withoutLoaded].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
