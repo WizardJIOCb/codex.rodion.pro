@@ -418,9 +418,16 @@ function jobDurationSeconds(job: Job) {
   return Math.max(0, Math.floor((finish - start) / 1000));
 }
 
-function formatDiffRowMeta(row: DiffRow) {
-  if (row.added || row.deleted) return `+${row.added} -${row.deleted}`;
-  return `${row.changed}${row.bars ? ` ${row.bars}` : ""}`;
+function renderDiffRowMeta(row: DiffRow) {
+  if (row.added || row.deleted) {
+    return (
+      <>
+        <span className="diff-added">+{row.added}</span>
+        <span className="diff-deleted">-{row.deleted}</span>
+      </>
+    );
+  }
+  return <span className="diff-neutral">{row.changed}{row.bars ? ` ${row.bars}` : ""}</span>;
 }
 
 function messageDurationSeconds(message: ChatMessage) {
@@ -2022,7 +2029,7 @@ function App() {
             {rows.map((row) => (
               <div key={row.file}>
                 <span>{row.file}</span>
-                <small>{formatDiffRowMeta(row)}</small>
+                <small className="diff-meta">{renderDiffRowMeta(row)}</small>
               </div>
             ))}
           </div>
@@ -2064,7 +2071,7 @@ function App() {
             {rows.map((row) => (
               <div key={row.file}>
                 <span>{row.file}</span>
-                <small>{formatDiffRowMeta(row)}</small>
+                <small className="diff-meta">{renderDiffRowMeta(row)}</small>
               </div>
             ))}
           </div>
@@ -2635,7 +2642,10 @@ function App() {
                                 {(activeProgress.files ?? []).slice(0, 8).map((file) => (
                                   <div key={file.path}>
                                     <span>{file.path}</span>
-                                    <small>+{file.added} -{file.deleted}</small>
+                                    <small className="diff-meta">
+                                      <span className="diff-added">+{file.added}</span>
+                                      <span className="diff-deleted">-{file.deleted}</span>
+                                    </small>
                                   </div>
                                 ))}
                               </div>
@@ -2670,7 +2680,7 @@ function App() {
                             {diffRows(activeJob.gitDiffStat, activeProgress?.files).map((row) => (
                               <div className="edited-row" key={row.file}>
                                 <span>{row.file}</span>
-                                <small>{formatDiffRowMeta(row)}</small>
+                                <small className="diff-meta">{renderDiffRowMeta(row)}</small>
                               </div>
                             ))}
                           </div>
