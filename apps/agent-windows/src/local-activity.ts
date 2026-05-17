@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, readdirSync, statSync } from "node:fs";
 import { join, normalize } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { LocalCodexActivity } from "@cmc/protocol";
@@ -18,6 +18,7 @@ type Candidate = {
   source: string;
   title?: string;
   updatedAt: number;
+  startedAt?: number;
 };
 
 export function detectLocalCodexActivity(config: AgentConfig, currentJobId?: string): LocalCodexActivity {
@@ -81,10 +82,48 @@ export function detectLocalCodexActivity(config: AgentConfig, currentJobId?: str
 function markBusy(key: string, seenAt: number, candidate: Candidate): void {
   if (busyKey !== key || !busySinceMs || Date.now() - lastBusySeenMs > BUSY_IDLE_GRACE_MS) {
     busyKey = key;
-    busySinceMs = Date.now();
+    busySinceMs = candidate.startedAt || seenAt || Date.now();
   }
   lastBusySeenMs = Math.max(lastBusySeenMs, seenAt);
   lastBusyCandidate = candidate;
+}
+
+function latestUserMessageMsFromCodexRollout(path: string): number | undefined {
+  const text = readTailText(path, 4 * 1024 * 1024);
+  if (!text) return undefined;
+  let latest = 0;
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    let row: any;
+    try {
+      row = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (row.type !== "response_item" || row.payload?.type !== "message" || row.payload?.role !== "user") continue;
+    const timestamp = Date.parse(typeof row.timestamp === "string" ? row.timestamp : "");
+    if (Number.isFinite(timestamp)) latest = Math.max(latest, timestamp);
+  }
+  return latest || undefined;
+}
+
+function readTailText(path: string, maxBytes: number): string {
+  if (!path || !existsSync(path)) return "";
+  let fd = -1;
+  try {
+    fd = openSync(cleanPath(path), "r");
+    const stat = fstatSync(fd);
+    const size = Math.min(stat.size, maxBytes);
+    const buffer = Buffer.alloc(size);
+    readSync(fd, buffer, 0, size, Math.max(0, stat.size - size));
+    const text = buffer.toString("utf8");
+    const firstNewline = text.indexOf("\n");
+    return stat.size > size && firstNewline >= 0 ? text.slice(firstNewline + 1) : text;
+  } catch {
+    return "";
+  } finally {
+    if (fd >= 0) closeSync(fd);
+  }
 }
 
 function recentCodexThreads(config: AgentConfig): Candidate[] {
@@ -95,21 +134,23 @@ function recentCodexThreads(config: AgentConfig): Candidate[] {
   const db = new DatabaseSync(statePath, { readOnly: true });
   try {
     const rows = db.prepare(`
-      SELECT title,cwd,updated_at
+      SELECT title,cwd,updated_at,rollout_path
       FROM threads
       WHERE archived = 0
       ORDER BY updated_at DESC
       LIMIT 20
-    `).all() as Array<{ title: string; cwd: string; updated_at: number }>;
+    `).all() as Array<{ title: string; cwd: string; updated_at: number; rollout_path: string }>;
     return rows.flatMap((row) => {
       const repo = matchRepo(config.repos, row.cwd);
       if (!repo) return [];
+      const startedAt = latestUserMessageMsFromCodexRollout(row.rollout_path);
       return [{
-        key: `local-codex:${repo.id}:${row.title}`,
+        key: `local-codex:${repo.id}:${row.title}:${startedAt || row.updated_at}`,
         repoId: repo.id,
         source: "local Codex",
         title: row.title,
-        updatedAt: timeMsFromNumber(row.updated_at)
+        updatedAt: timeMsFromNumber(row.updated_at),
+        startedAt
       }];
     });
   } catch {

@@ -379,16 +379,18 @@ function diffRows(stat: string | null, fallbackFiles?: JobProgress["files"], lim
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean)
-    .map((line) => {
+    .filter((line) => !/^\d+\s+files?\s+changed\b/i.test(line))
+    .flatMap((line) => {
       const match = line.match(/^(.*?)\s+\|\s+(\d+)\s+([+\-]+)?/);
+      if (!match) return [];
       const bars = match?.[3] ?? "";
-      return {
+      return [{
         file: match?.[1]?.trim() || line,
         changed: Number(match?.[2] ?? 0),
         bars,
         added: [...bars].filter((char) => char === "+").length,
         deleted: [...bars].filter((char) => char === "-").length
-      };
+      }];
     });
   const allRows = rows.length ? rows : fallbackRows;
   return limit === Number.POSITIVE_INFINITY ? allRows : allRows.slice(0, limit);
@@ -396,15 +398,16 @@ function diffRows(stat: string | null, fallbackFiles?: JobProgress["files"], lim
 
 function diffSummary(stat: string | null, fallback?: { filesChanged?: number; added?: number; deleted?: number; files?: JobProgress["files"] } | null) {
   const rows = diffRows(stat, fallback?.files, Number.POSITIVE_INFINITY);
+  const statSummary = stat?.match(/(\d+)\s+files?\s+changed(?:,\s+(\d+)\s+insertions?\(\+\))?(?:,\s+(\d+)\s+deletions?\(-\))?/i);
   const fromRows = rows.reduce((total, row) => ({
     files: total.files + 1,
     added: total.added + row.added,
     deleted: total.deleted + row.deleted
   }), { files: 0, added: 0, deleted: 0 });
   return {
-    files: Math.max(fromRows.files, fallback?.filesChanged || 0),
-    added: Math.max(fromRows.added, fallback?.added || 0),
-    deleted: Math.max(fromRows.deleted, fallback?.deleted || 0)
+    files: Math.max(Number(statSummary?.[1] ?? 0), fromRows.files, fallback?.filesChanged || 0),
+    added: Math.max(Number(statSummary?.[2] ?? 0), fromRows.added, fallback?.added || 0),
+    deleted: Math.max(Number(statSummary?.[3] ?? 0), fromRows.deleted, fallback?.deleted || 0)
   };
 }
 
@@ -418,6 +421,26 @@ function jobDurationSeconds(job: Job) {
 function formatDiffRowMeta(row: DiffRow) {
   if (row.added || row.deleted) return `+${row.added} -${row.deleted}`;
   return `${row.changed}${row.bars ? ` ${row.bars}` : ""}`;
+}
+
+function messageDurationSeconds(message: ChatMessage) {
+  if (typeof message.metadata?.durationSeconds === "number") return Math.max(0, Math.floor(message.metadata.durationSeconds));
+  const startedAt = typeof message.metadata?.startedAt === "string" ? Date.parse(message.metadata.startedAt) : NaN;
+  const finishedAt = Date.parse(message.createdAt);
+  if (!Number.isFinite(startedAt) || !Number.isFinite(finishedAt)) return 0;
+  return Math.max(0, Math.floor((finishedAt - startedAt) / 1000));
+}
+
+function parseCommandOutput(output: string) {
+  const normalized = normalizeDisplayText(output).trim();
+  const exitCode = normalized.match(/^Exit code:\s*([^\n]+)$/im)?.[1]?.trim();
+  const wallTime = normalized.match(/^Wall time:\s*([^\n]+)$/im)?.[1]?.trim();
+  const body = normalized
+    .replace(/^Exit code:\s*[^\n]+\n?/im, "")
+    .replace(/^Wall time:\s*[^\n]+\n?/im, "")
+    .replace(/^Output:\s*\n?/im, "")
+    .trim();
+  return { exitCode, wallTime, body };
 }
 
 function normalizeDisplayText(value: string) {
@@ -2017,47 +2040,37 @@ function App() {
     const summary = diffSummary(stat || null, progress);
     const actionKey = `changes:${message.id}`;
     const expanded = Boolean(expandedActions[actionKey]);
-    const visibleRows = expanded ? rows : rows.slice(0, 3);
-    const hiddenCount = Math.max(0, rows.length - visibleRows.length);
+    const durationSeconds = job?.finishedAt ? jobDurationSeconds(job) : messageDurationSeconds(message);
     return (
       <div className="codex-change-card">
         <div className="codex-change-head">
           <div className="codex-change-title">
             <span className="change-icon"><Wrench size={16} /></span>
             <div>
-              <strong>Edited {summary.files} files</strong>
+              <strong>Edited {summary.files} {summary.files === 1 ? "file" : "files"}</strong>
               <small>
-                {job?.finishedAt && <span className="duration">Worked for {formatDuration(jobDurationSeconds(job))}</span>}
+                {durationSeconds > 0 && <span className="duration">Worked for {formatDuration(durationSeconds)}</span>}
                 <span className="added">+{summary.added}</span>
                 <span className="deleted">-{summary.deleted}</span>
               </small>
             </div>
           </div>
           <button type="button" onClick={() => setExpandedActions((current) => ({ ...current, [actionKey]: !current[actionKey] }))}>
-            Review
+            {expanded ? "Hide" : "Details"}
           </button>
         </div>
-        {visibleRows.length ? (
+        {expanded && rows.length ? (
           <div className="codex-change-files">
-            {visibleRows.map((row) => (
+            {rows.map((row) => (
               <div key={row.file}>
                 <span>{row.file}</span>
                 <small>{formatDiffRowMeta(row)}</small>
               </div>
             ))}
           </div>
-        ) : (
+        ) : expanded ? (
           <div className="codex-change-empty">No files changed.</div>
-        )}
-        {hiddenCount > 0 && (
-          <button
-            className="show-more-files"
-            type="button"
-            onClick={() => setExpandedActions((current) => ({ ...current, [actionKey]: true }))}
-          >
-            Show {hiddenCount} more files
-          </button>
-        )}
+        ) : null}
       </div>
     );
   }
@@ -2078,15 +2091,22 @@ function App() {
         </button>
         {expanded && (
           <div className="message-action-details command-details">
-            {actions.map((action) => (
-              <details key={action.id}>
-                <summary>
-                  <span>{action.command}</span>
-                  <small>{action.status}</small>
-                </summary>
-                {action.output ? <pre>{action.output}</pre> : <small>No output.</small>}
-              </details>
-            ))}
+            {actions.map((action) => {
+              const parsed = parseCommandOutput(action.output);
+              return (
+                <details key={action.id}>
+                  <summary>
+                    <span>{action.command}</span>
+                    <small>{action.status}</small>
+                  </summary>
+                  <div className="command-meta">
+                    {parsed.exitCode && <span>Exit {parsed.exitCode}</span>}
+                    {parsed.wallTime && <span>{parsed.wallTime}</span>}
+                  </div>
+                  {parsed.body ? <pre>{parsed.body}</pre> : <small>No output.</small>}
+                </details>
+              );
+            })}
           </div>
         )}
       </div>

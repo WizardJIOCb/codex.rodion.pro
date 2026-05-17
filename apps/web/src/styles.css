@@ -1475,8 +1475,8 @@ h2 {
 .command-details details {
   min-width: 0;
   display: grid;
-  gap: 6px;
-  padding: 7px;
+  gap: 8px;
+  padding: 9px;
   border: 1px solid var(--line);
   border-radius: 7px;
   background: #ffffff;
@@ -1491,6 +1491,34 @@ h2 {
   cursor: pointer;
   color: var(--text);
   font-weight: 800;
+}
+
+.command-details summary small {
+  padding: 2px 7px;
+  border-radius: 999px;
+  color: var(--accent-2);
+  background: rgba(16, 163, 127, 0.1);
+  font-size: 11px;
+  text-transform: lowercase;
+}
+
+.command-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.command-meta span {
+  display: inline-flex;
+  width: auto;
+  padding: 2px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  background: #f8f8f5;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
 }
 
 .command-details pre {

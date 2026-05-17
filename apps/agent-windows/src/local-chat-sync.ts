@@ -115,6 +115,7 @@ function readCodexRollout(path: string): ChatMessage[] {
   let lastChangeStat = "";
   const actionsById = new Map<string, SyncedCodexAction>();
   let pendingActions: SyncedCodexAction[] = [];
+  let currentRunStartedAt = "";
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
     if (!line) continue;
@@ -125,14 +126,23 @@ function readCodexRollout(path: string): ChatMessage[] {
       continue;
     }
     const createdAt = typeof row.timestamp === "string" ? row.timestamp : new Date().toISOString();
-    if (row.type === "response_item" && row.payload?.type === "function_call") {
+    if (row.type === "response_item" && row.payload?.type === "message" && row.payload?.role === "user") {
+      currentRunStartedAt = createdAt;
+    }
+    if (
+      (row.type === "response_item" && row.payload?.type === "function_call")
+      || row.type === "custom_tool_call"
+    ) {
       const action = actionFromFunctionCall(row.payload, createdAt, index);
       if (action) {
         actionsById.set(action.id, action);
         pendingActions.push(action);
       }
     }
-    if (row.type === "response_item" && row.payload?.type === "function_call_output") {
+    if (
+      (row.type === "response_item" && row.payload?.type === "function_call_output")
+      || row.type === "custom_tool_call_output"
+    ) {
       const actionId = typeof row.payload.call_id === "string" ? row.payload.call_id : "";
       const action = actionId ? actionsById.get(actionId) : undefined;
       if (action) {
@@ -153,6 +163,11 @@ function readCodexRollout(path: string): ChatMessage[] {
         if (role === "assistant" && pendingActions.length) {
           metadata.codexActions = pendingActions.map((action) => ({ ...action }));
           pendingActions = [];
+        }
+        if (role === "assistant" && currentRunStartedAt) {
+          metadata.startedAt = currentRunStartedAt;
+          const durationSeconds = Math.max(0, Math.round((Date.parse(createdAt) - Date.parse(currentRunStartedAt)) / 1000));
+          if (Number.isFinite(durationSeconds)) metadata.durationSeconds = durationSeconds;
         }
         messages.push({
           role,
@@ -212,14 +227,15 @@ function cleanActionOutput(value: unknown): string {
 function extractChangeStat(output: unknown): string {
   if (typeof output !== "string" || !/diff --git|\|\s+\d+|files? changed/i.test(output)) return "";
   const normalized = output.replace(/\r\n/g, "\n");
+  if (/^diff --git /m.test(normalized)) {
+    const diffRows = diffStatFromPatch(normalized);
+    if (diffRows.length) return diffRows.join("\n").slice(0, 12000);
+  }
   const statLines = normalized
     .split("\n")
     .map((line) => line.trimEnd())
-    .filter((line) => /^\s*\S.*\s+\|\s+\d+/.test(line));
+    .filter((line) => /^\s*\S.*\s+\|\s+\d+/.test(line) || /^\s*\d+\s+files?\s+changed\b/i.test(line));
   if (statLines.length) return statLines.join("\n").slice(0, 12000);
-
-  const diffRows = diffStatFromPatch(normalized);
-  if (diffRows.length) return diffRows.join("\n").slice(0, 12000);
   return "";
 }
 
