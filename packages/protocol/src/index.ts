@@ -361,6 +361,19 @@ export const CreateUserSchema = z.object({
 });
 export type CreateUser = z.infer<typeof CreateUserSchema>;
 
+export const ProfileUpdateSchema = z.object({
+  nickname: z.string().trim().min(3).max(32).regex(/^[a-z0-9_](?:[a-z0-9_.-]*[a-z0-9_])?$/i).optional().or(z.literal("")),
+  bio: z.string().max(1000).optional(),
+  avatarDataUrl: z.string().max(1500000).regex(/^data:image\/(?:png|jpeg|gif|webp|avif|bmp);base64,[A-Za-z0-9+/]+={0,2}$/).optional().or(z.literal(""))
+});
+export type ProfileUpdate = z.infer<typeof ProfileUpdateSchema>;
+
+export const PasswordUpdateSchema = z.object({
+  currentPassword: z.string().min(1).max(200),
+  newPassword: z.string().min(8).max(200)
+});
+export type PasswordUpdate = z.infer<typeof PasswordUpdateSchema>;
+
 export const CreateAgentSchema = z.object({
   id: z.string().min(3).max(80).regex(/^[a-z0-9_-]+$/i).optional(),
   name: z.string().min(1).max(120),

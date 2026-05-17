@@ -7,7 +7,19 @@ export type UserRow = {
   email: string;
   password_hash: string;
   role: "admin" | "user";
+  nickname: string | null;
+  bio: string | null;
+  avatar_data_url: string | null;
+  updated_at: string | null;
   created_at: string;
+};
+
+export type OAuthConnectionRow = {
+  user_id: string;
+  provider: string;
+  provider_user_id: string | null;
+  display_name: string | null;
+  connected_at: string;
 };
 
 export type SessionRow = {
@@ -127,6 +139,10 @@ export function openDb(path: string): DatabaseSync {
       email TEXT NOT NULL UNIQUE,
       password_hash TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'user',
+      nickname TEXT,
+      bio TEXT,
+      avatar_data_url TEXT,
+      updated_at TEXT,
       created_at TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS sessions (
@@ -229,6 +245,14 @@ export function openDb(path: string): DatabaseSync {
       data_base64 TEXT NOT NULL,
       created_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS oauth_connections (
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      provider TEXT NOT NULL,
+      provider_user_id TEXT,
+      display_name TEXT,
+      connected_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, provider)
+    );
     CREATE TABLE IF NOT EXISTS deleted_chat_sync (
       agent_id TEXT NOT NULL,
       repo_id TEXT NOT NULL,
@@ -244,10 +268,23 @@ export function openDb(path: string): DatabaseSync {
     CREATE INDEX IF NOT EXISTS idx_attachments_job ON job_attachments(job_id);
     CREATE INDEX IF NOT EXISTS idx_attachments_message ON job_attachments(chat_message_id);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_external ON chat_messages(chat_id, source, external_id) WHERE external_id IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_users_nickname ON users(nickname) WHERE nickname IS NOT NULL AND nickname != '';
   `);
   const userColumns = db.prepare("PRAGMA table_info(users)").all() as Array<{ name: string }>;
   if (!userColumns.some((column) => column.name === "role")) {
     db.exec("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'");
+  }
+  if (!userColumns.some((column) => column.name === "nickname")) {
+    db.exec("ALTER TABLE users ADD COLUMN nickname TEXT");
+  }
+  if (!userColumns.some((column) => column.name === "bio")) {
+    db.exec("ALTER TABLE users ADD COLUMN bio TEXT");
+  }
+  if (!userColumns.some((column) => column.name === "avatar_data_url")) {
+    db.exec("ALTER TABLE users ADD COLUMN avatar_data_url TEXT");
+  }
+  if (!userColumns.some((column) => column.name === "updated_at")) {
+    db.exec("ALTER TABLE users ADD COLUMN updated_at TEXT");
   }
   const firstUser = db.prepare("SELECT id FROM users ORDER BY created_at ASC LIMIT 1").get() as { id: string } | undefined;
   const adminUser = db.prepare("SELECT id FROM users WHERE role = 'admin' LIMIT 1").get() as { id: string } | undefined;

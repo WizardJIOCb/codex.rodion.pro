@@ -4,11 +4,18 @@ import {
   Activity,
   ArrowLeft,
   Bot,
+  CalendarDays,
+  Camera,
   Check,
   CheckCircle2,
+  Clock3,
   FolderGit2,
+  Github,
   GitBranch,
+  KeyRound,
+  Link2,
   LogOut,
+  Mail,
   MessageSquare,
   Paperclip,
   Play,
@@ -20,6 +27,7 @@ import {
   Square,
   Trash2,
   UploadCloud,
+  UserCircle,
   Wifi,
   WifiOff,
   X
@@ -58,7 +66,28 @@ type User = {
   id: string;
   email: string;
   role: "admin" | "user";
+  nickname?: string | null;
+  bio?: string | null;
+  avatarDataUrl?: string | null;
   createdAt?: string;
+  updatedAt?: string | null;
+};
+
+type ProfileStats = {
+  chats: number;
+  jobs: number;
+  completedJobs: number;
+  failedJobs: number;
+  projects: number;
+  generationSeconds: number;
+};
+
+type OAuthProvider = {
+  provider: "google" | "github" | "vk" | "mailru";
+  connected: boolean;
+  displayName?: string | null;
+  connectedAt?: string | null;
+  configured: boolean;
 };
 
 type AgentSetup = {
@@ -223,6 +252,15 @@ function formatBytes(value: number) {
   if (value < 1024) return `${value} B`;
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
   return `${(value / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function formatDuration(totalSeconds: number) {
+  const seconds = Math.max(0, Math.floor(totalSeconds));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (hours) return `${hours}h ${minutes}m`;
+  if (minutes) return `${minutes}m`;
+  return `${seconds}s`;
 }
 
 function isPreviewableImage(mimeType: string) {
@@ -504,8 +542,16 @@ function App() {
   const [chatNotice, setChatNotice] = useState("");
   const [projectNotice, setProjectNotice] = useState("");
   const [attachmentNotice, setAttachmentNotice] = useState("");
-  const [view, setView] = useState<"projects" | "settings">("projects");
+  const [view, setView] = useState<"projects" | "settings" | "profile">("projects");
   const [users, setUsers] = useState<User[]>([]);
+  const [profileStatsData, setProfileStatsData] = useState<ProfileStats | null>(null);
+  const [oauthProviders, setOauthProviders] = useState<OAuthProvider[]>([]);
+  const [profileNickname, setProfileNickname] = useState("");
+  const [profileBio, setProfileBio] = useState("");
+  const [profileAvatarDataUrl, setProfileAvatarDataUrl] = useState("");
+  const [profileNotice, setProfileNotice] = useState("");
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
   const [newUserEmail, setNewUserEmail] = useState("");
   const [newUserPassword, setNewUserPassword] = useState("");
   const [newUserRole, setNewUserRole] = useState<"admin" | "user">("user");
@@ -545,6 +591,18 @@ function App() {
     if (currentUser?.role !== "admin") return;
     const response = await api("/api/users");
     if (response.ok) setUsers((await response.json()).users);
+  }
+
+  async function loadProfile() {
+    const response = await api("/api/profile");
+    if (!response.ok) return;
+    const data = await response.json();
+    setCurrentUser(data.user);
+    setProfileStatsData(data.stats);
+    setOauthProviders(data.oauth);
+    setProfileNickname(data.user.nickname ?? "");
+    setProfileBio(data.user.bio ?? "");
+    setProfileAvatarDataUrl(data.user.avatarDataUrl ?? "");
   }
 
   async function loadChats(repo: Repo, selectFirst = false) {
@@ -641,6 +699,19 @@ function App() {
     setActiveJob(null);
     setLogs([]);
     loadUsers();
+  }
+
+  function openProfileView() {
+    setView("profile");
+    setProjectPanel(null);
+    setRepoKey("");
+    setActiveChatId("");
+    setJobs([]);
+    setMessages([]);
+    setActiveJob(null);
+    setLogs([]);
+    setProfileNotice("");
+    loadProfile();
   }
 
   function openNewProject() {
@@ -1050,6 +1121,160 @@ function App() {
     await refresh();
   }
 
+  async function saveProfile(event: React.FormEvent) {
+    event.preventDefault();
+    if (!csrf) return;
+    setBusy(true);
+    setProfileNotice("");
+    const response = await api("/api/profile", {
+      method: "PUT",
+      headers: { "x-csrf-token": csrf },
+      body: JSON.stringify({
+        nickname: profileNickname.trim(),
+        bio: profileBio,
+        avatarDataUrl: profileAvatarDataUrl
+      })
+    });
+    const data = await response.json().catch(() => ({}));
+    setBusy(false);
+    if (!response.ok) {
+      setProfileNotice(data.error === "nickname_taken" ? "Этот nickname уже занят." : data.error || "Profile update failed.");
+      return;
+    }
+    setCurrentUser(data.user);
+    setProfileStatsData(data.stats);
+    setOauthProviders(data.oauth);
+    setProfileNotice("Profile saved.");
+  }
+
+  async function changePassword(event: React.FormEvent) {
+    event.preventDefault();
+    if (!csrf || !currentPassword || !newPassword) return;
+    setBusy(true);
+    setProfileNotice("");
+    const response = await api("/api/profile/password", {
+      method: "POST",
+      headers: { "x-csrf-token": csrf },
+      body: JSON.stringify({ currentPassword, newPassword })
+    });
+    const data = await response.json().catch(() => ({}));
+    setBusy(false);
+    if (!response.ok) {
+      setProfileNotice(data.error === "invalid_current_password" ? "Текущий пароль неверный." : data.error || "Password change failed.");
+      return;
+    }
+    setCurrentPassword("");
+    setNewPassword("");
+    setProfileNotice("Password changed.");
+  }
+
+  async function connectOAuth(provider: OAuthProvider["provider"]) {
+    if (!csrf) return;
+    const response = await api(`/api/profile/oauth/${provider}/start`, {
+      method: "POST",
+      headers: { "x-csrf-token": csrf },
+      body: "{}"
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      setProfileNotice(data.error === "oauth_provider_not_configured" ? "OAuth для этого провайдера пока не настроен на сервере." : data.error || "OAuth start failed.");
+    }
+  }
+
+  function updateProfileAvatar(file?: File) {
+    if (!file) return;
+    if (!isPreviewableImage(file.type) || file.size > 1024 * 1024) {
+      setProfileNotice("Аватарка: PNG/JPEG/WebP/GIF/AVIF/BMP до 1 MB.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onerror = () => setProfileNotice("Не получилось прочитать аватарку.");
+    reader.onload = () => {
+      setProfileAvatarDataUrl(String(reader.result ?? ""));
+      setProfileNotice("");
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function oauthIcon(provider: OAuthProvider["provider"]) {
+    if (provider === "github") return <Github size={17} />;
+    if (provider === "mailru") return <Mail size={17} />;
+    return <Link2 size={17} />;
+  }
+
+  function oauthLabel(provider: OAuthProvider["provider"]) {
+    return provider === "mailru" ? "Mail.ru" : provider === "vk" ? "VK.com" : provider === "github" ? "GitHub" : "Google";
+  }
+
+  function renderProfile() {
+    const stats = profileStatsData ?? { chats: 0, jobs: 0, completedJobs: 0, failedJobs: 0, projects: 0, generationSeconds: 0 };
+    const displayName = currentUser?.nickname || currentUser?.email || "Profile";
+    return (
+      <section className="settings-work profile-work">
+        <section className="profile-hero">
+          <div className="profile-avatar">
+            {profileAvatarDataUrl || currentUser?.avatarDataUrl ? <img alt="" src={profileAvatarDataUrl || currentUser?.avatarDataUrl || ""} /> : <UserCircle size={54} />}
+          </div>
+          <div>
+            <h2>{displayName}</h2>
+            <p>{currentUser?.email}</p>
+            <small><CalendarDays size={14} /> Registered {currentUser?.createdAt ? new Date(currentUser.createdAt).toLocaleString() : "unknown"}</small>
+          </div>
+        </section>
+
+        <section className="profile-grid">
+          <div className="stat-card"><MessageSquare size={18} /><span>Chats</span><strong>{stats.chats}</strong></div>
+          <div className="stat-card"><Activity size={18} /><span>Runs</span><strong>{stats.jobs}</strong></div>
+          <div className="stat-card"><CheckCircle2 size={18} /><span>Completed</span><strong>{stats.completedJobs}</strong></div>
+          <div className="stat-card"><FolderGit2 size={18} /><span>Projects</span><strong>{stats.projects}</strong></div>
+          <div className="stat-card wide"><Clock3 size={18} /><span>Generation time</span><strong>{formatDuration(stats.generationSeconds)}</strong></div>
+        </section>
+
+        <form className="settings-card profile-card" onSubmit={saveProfile}>
+          <h2><UserCircle size={18} /> Profile parameters</h2>
+          <label>
+            Unique nickname
+            <input placeholder="rodion" value={profileNickname} onChange={(event) => setProfileNickname(event.target.value)} />
+          </label>
+          <label>
+            Description
+            <textarea placeholder="Коротко о себе и своём сетапе..." value={profileBio} onChange={(event) => setProfileBio(event.target.value)} />
+          </label>
+          <label className="avatar-upload">
+            <Camera size={16} /> Update avatar
+            <input accept="image/png,image/jpeg,image/gif,image/webp,image/avif,image/bmp" type="file" onChange={(event) => updateProfileAvatar(event.currentTarget.files?.[0])} />
+          </label>
+          <button disabled={busy} type="submit"><Save size={16} /> Save profile</button>
+        </form>
+
+        <form className="settings-card profile-card" onSubmit={changePassword}>
+          <h2><KeyRound size={18} /> Password</h2>
+          <input autoComplete="current-password" placeholder="current password" type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} />
+          <input autoComplete="new-password" placeholder="new password" type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
+          <button disabled={busy || !currentPassword || newPassword.length < 8} type="submit"><KeyRound size={16} /> Change password</button>
+        </form>
+
+        <section className="settings-card profile-card">
+          <h2><Link2 size={18} /> OAuth connections</h2>
+          <div className="oauth-list">
+            {oauthProviders.map((provider) => (
+              <div className="oauth-row" key={provider.provider}>
+                <span>{oauthIcon(provider.provider)} {oauthLabel(provider.provider)}</span>
+                <small>{provider.connected ? `Connected${provider.displayName ? ` as ${provider.displayName}` : ""}` : provider.configured ? "Ready to connect" : "Server config needed"}</small>
+                <button disabled={busy} type="button" onClick={() => connectOAuth(provider.provider)}>
+                  {provider.connected ? "Reconnect" : "Connect"}
+                </button>
+              </div>
+            ))}
+          </div>
+          <p>Для реального OAuth нужно добавить client id/secret и callback URL на сервере; интерфейс уже показывает провайдеры и состояние подключения.</p>
+        </section>
+
+        {profileNotice && <div className="notice">{profileNotice}</div>}
+      </section>
+    );
+  }
+
   function renderSettings() {
     return (
       <section className="settings-work">
@@ -1225,7 +1450,7 @@ function App() {
     return (
       <main className="login">
         <section className="login-panel">
-          <div className="brand-mark"><Bot size={30} /></div>
+          <img className="brand-logo large" src="/favicon.svg" alt="" />
           <h1>Codex Control</h1>
           <p>Домашний Codex, управляемый с iPhone.</p>
           <form onSubmit={login}>
@@ -1242,7 +1467,7 @@ function App() {
     <main className="app-frame">
       <aside className="app-nav">
         <div className="nav-brand">
-          <div className="brand-mark small"><Bot size={20} /></div>
+          <img className="brand-logo" src="/favicon.svg" alt="" />
           <strong>codex.rodion.pro</strong>
         </div>
         <nav>
@@ -1283,6 +1508,7 @@ function App() {
             </div>
           </div>
           <button className="nav-item"><Activity size={17} /> Runs</button>
+          <button className={view === "profile" ? "nav-item active" : "nav-item"} onClick={openProfileView}><UserCircle size={17} /> Profile</button>
           <button className={view === "settings" ? "nav-item active" : "nav-item"} onClick={openSettingsView}><Settings size={17} /> Settings</button>
         </nav>
         <div className="nav-agent">
@@ -1296,7 +1522,7 @@ function App() {
       <header className="topbar">
         <div>
           <span className={`status ${online ? "ok" : "bad"}`}>{online ? <Wifi size={16} /> : <WifiOff size={16} />} {online ? "Home PC online" : "Home PC offline"}</span>
-          <h1>{view === "settings" ? "Settings" : selectedRepo ? selectedRepo.name : "Projects"}</h1>
+          <h1>{view === "settings" ? "Settings" : view === "profile" ? "Profile" : selectedRepo ? selectedRepo.name : "Projects"}</h1>
         </div>
         <div className="top-actions">
           {selectedRepo && <button className="icon" onClick={clearProjectSelection} title="Проекты"><ArrowLeft size={18} /></button>}
@@ -1316,6 +1542,7 @@ function App() {
       </section>
 
       {view === "settings" && renderSettings()}
+      {view === "profile" && renderProfile()}
 
       {view === "projects" && !selectedRepo && (
         <section className="project-picker">

@@ -15,6 +15,8 @@ import {
   CreateProjectSchema,
   CreateUserSchema,
   NginxSchema,
+  PasswordUpdateSchema,
+  ProfileUpdateSchema,
   SslSchema,
   UpdateProjectSchema,
   type AgentToServer,
@@ -35,6 +37,7 @@ import {
   type ChatRow,
   type JobRow,
   type LogRow,
+  type OAuthConnectionRow,
   type RepoRow,
   type UserRow
 } from "./db.js";
@@ -110,6 +113,73 @@ function requireAdminUser(auth: { user: UserRow }, reply: FastifyReply): boolean
   if (auth.user.role === "admin") return true;
   reply.code(403).send({ error: "admin_required" });
   return false;
+}
+
+function serializeUser(user: UserRow) {
+  return {
+    id: user.id,
+    email: user.email,
+    role: user.role,
+    nickname: user.nickname,
+    bio: user.bio,
+    avatarDataUrl: user.avatar_data_url,
+    createdAt: user.created_at,
+    updatedAt: user.updated_at
+  };
+}
+
+function profileStats(user: AuthUser) {
+  const agentFilter = isAdmin(user) ? "" : "AND a.user_id = ?";
+  const args = isAdmin(user) ? [] : [user.id];
+  const chatStats = db.prepare(`
+    SELECT COUNT(*) AS chats
+    FROM chats c
+    JOIN agents a ON a.id = c.agent_id
+    WHERE 1=1 ${agentFilter}
+  `).get(...args) as { chats: number };
+  const jobStats = db.prepare(`
+    SELECT
+      COUNT(*) AS jobs,
+      SUM(CASE WHEN j.status = 'completed' THEN 1 ELSE 0 END) AS completed,
+      SUM(CASE WHEN j.status = 'failed' THEN 1 ELSE 0 END) AS failed,
+      SUM(CASE
+        WHEN j.finished_at IS NOT NULL THEN
+          MAX(0, CAST(ROUND((julianday(j.finished_at) - julianday(COALESCE(j.started_at, j.created_at))) * 86400) AS INTEGER))
+        ELSE 0
+      END) AS seconds
+    FROM jobs j
+    JOIN agents a ON a.id = j.agent_id
+    WHERE 1=1 ${agentFilter}
+  `).get(...args) as { jobs: number; completed: number | null; failed: number | null; seconds: number | null };
+  const repoStats = db.prepare(`
+    SELECT COUNT(*) AS projects
+    FROM repos r
+    JOIN agents a ON a.id = r.agent_id
+    WHERE 1=1 ${agentFilter}
+  `).get(...args) as { projects: number };
+  return {
+    chats: chatStats.chats,
+    jobs: jobStats.jobs,
+    completedJobs: jobStats.completed ?? 0,
+    failedJobs: jobStats.failed ?? 0,
+    projects: repoStats.projects,
+    generationSeconds: jobStats.seconds ?? 0
+  };
+}
+
+function oauthProviders(userId: string) {
+  const rows = db.prepare("SELECT * FROM oauth_connections WHERE user_id = ?").all(userId) as OAuthConnectionRow[];
+  const byProvider = new Map(rows.map((row) => [row.provider, row]));
+  return ["google", "github", "vk", "mailru"].map((provider) => {
+    const row = byProvider.get(provider);
+    return {
+      provider,
+      connected: Boolean(row),
+      displayName: row?.display_name,
+      connectedAt: row?.connected_at,
+      configured: false
+    };
+  });
 }
 
 function visibleAgentIds(user: AuthUser): string[] {
@@ -648,7 +718,55 @@ async function createApp(): Promise<FastifyInstance> {
   app.get("/api/me", async (request, reply) => {
     const auth = getSession(db, request);
     if (!auth) return reply.code(401).send({ user: null });
-    return { user: { id: auth.user.id, email: auth.user.email, role: auth.user.role }, csrfToken: auth.session.csrf_token };
+    return { user: serializeUser(auth.user), csrfToken: auth.session.csrf_token };
+  });
+
+  app.get("/api/profile", async (request, reply) => {
+    const auth = requireAuth(db, request, reply);
+    if (!auth) return;
+    return {
+      user: serializeUser(auth.user),
+      stats: profileStats(auth.user),
+      oauth: oauthProviders(auth.user.id)
+    };
+  });
+
+  app.put("/api/profile", async (request, reply) => {
+    const auth = requireAuth(db, request, reply);
+    if (!auth || !requireCsrf(db, request, reply)) return;
+    const parsed = ProfileUpdateSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_profile", details: parsed.error.flatten() });
+    const nickname = parsed.data.nickname ? parsed.data.nickname.trim().toLowerCase() : null;
+    if (nickname) {
+      const existing = db.prepare("SELECT id FROM users WHERE nickname = ? AND id != ?").get(nickname, auth.user.id) as { id: string } | undefined;
+      if (existing) return reply.code(409).send({ error: "nickname_taken" });
+    }
+    const stamp = nowIso();
+    db.prepare("UPDATE users SET nickname = ?, bio = ?, avatar_data_url = ?, updated_at = ? WHERE id = ?")
+      .run(nickname, parsed.data.bio?.trim() || null, parsed.data.avatarDataUrl || null, stamp, auth.user.id);
+    const user = db.prepare("SELECT * FROM users WHERE id = ?").get(auth.user.id) as UserRow;
+    return { user: serializeUser(user), stats: profileStats(user), oauth: oauthProviders(user.id) };
+  });
+
+  app.post("/api/profile/password", async (request, reply) => {
+    const auth = requireAuth(db, request, reply);
+    if (!auth || !requireCsrf(db, request, reply)) return;
+    const parsed = PasswordUpdateSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_password", details: parsed.error.flatten() });
+    if (!(await verifySecret(parsed.data.currentPassword, auth.user.password_hash))) {
+      return reply.code(403).send({ error: "invalid_current_password" });
+    }
+    db.prepare("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?")
+      .run(await hashSecret(parsed.data.newPassword), nowIso(), auth.user.id);
+    return { ok: true };
+  });
+
+  app.post("/api/profile/oauth/:provider/start", async (request, reply) => {
+    const auth = requireAuth(db, request, reply);
+    if (!auth || !requireCsrf(db, request, reply)) return;
+    const provider = (request.params as { provider: string }).provider;
+    if (!["google", "github", "vk", "mailru"].includes(provider)) return reply.code(404).send({ error: "provider_not_found" });
+    return reply.code(501).send({ error: "oauth_provider_not_configured", provider });
   });
 
   app.post("/api/login", async (request, reply) => {
@@ -675,8 +793,8 @@ async function createApp(): Promise<FastifyInstance> {
   app.get("/api/users", async (request, reply) => {
     const auth = requireAuth(db, request, reply);
     if (!auth || !requireAdminUser(auth, reply)) return;
-    const rows = db.prepare("SELECT id,email,role,created_at FROM users ORDER BY created_at").all() as UserRow[];
-    return { users: rows.map((user) => ({ id: user.id, email: user.email, role: user.role, createdAt: user.created_at })) };
+    const rows = db.prepare("SELECT * FROM users ORDER BY created_at").all() as UserRow[];
+    return { users: rows.map(serializeUser) };
   });
 
   app.post("/api/users", async (request, reply) => {
