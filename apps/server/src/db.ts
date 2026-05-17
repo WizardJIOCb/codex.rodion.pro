@@ -131,6 +131,16 @@ export type AttachmentRow = {
   created_at: string;
 };
 
+export type ChatAttachmentRow = {
+  id: string;
+  chat_message_id: string;
+  name: string;
+  mime_type: string;
+  size: number;
+  data_base64: string;
+  created_at: string;
+};
+
 export type LogRow = {
   id: string;
   job_id: string;
@@ -256,6 +266,15 @@ export function openDb(path: string): DatabaseSync {
       data_base64 TEXT NOT NULL,
       created_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS chat_attachments (
+      id TEXT PRIMARY KEY,
+      chat_message_id TEXT NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      size INTEGER NOT NULL,
+      data_base64 TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS oauth_connections (
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       provider TEXT NOT NULL,
@@ -286,6 +305,7 @@ export function openDb(path: string): DatabaseSync {
     CREATE INDEX IF NOT EXISTS idx_messages_chat_at ON chat_messages(chat_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_attachments_job ON job_attachments(job_id);
     CREATE INDEX IF NOT EXISTS idx_attachments_message ON job_attachments(chat_message_id);
+    CREATE INDEX IF NOT EXISTS idx_chat_attachments_message ON chat_attachments(chat_message_id);
     CREATE INDEX IF NOT EXISTS idx_oauth_states_expires ON oauth_states(expires_at);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_external ON chat_messages(chat_id, source, external_id) WHERE external_id IS NOT NULL;
   `);
@@ -358,6 +378,7 @@ export function openDb(path: string): DatabaseSync {
   db.exec("CREATE INDEX IF NOT EXISTS idx_messages_chat_at ON chat_messages(chat_id, created_at)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_attachments_job ON job_attachments(job_id)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_attachments_message ON job_attachments(chat_message_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_chat_attachments_message ON chat_attachments(chat_message_id)");
   db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_chats_external ON chats(agent_id, source, external_id) WHERE external_id IS NOT NULL");
   db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_external ON chat_messages(chat_id, source, external_id) WHERE external_id IS NOT NULL");
   return db;

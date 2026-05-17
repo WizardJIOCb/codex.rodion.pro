@@ -169,6 +169,7 @@ export const ChatMessageSchema = z.object({
   source: z.string().min(1).max(40).default("web"),
   externalId: z.string().max(300).optional(),
   createdAt: z.string().datetime(),
+  attachments: z.array(JobAttachmentSchema).max(8).default([]).optional(),
   metadata: z.record(z.unknown()).optional()
 });
 export type ChatMessage = z.infer<typeof ChatMessageSchema>;

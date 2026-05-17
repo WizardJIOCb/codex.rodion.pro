@@ -34,6 +34,7 @@ import {
   parseCodexUsage,
   type AgentRow,
   type AttachmentRow,
+  type ChatAttachmentRow,
   type ChatMessageRow,
   type ChatRow,
   type JobRow,
@@ -488,8 +489,10 @@ function chatRepoId(chatId: string): string {
 }
 
 function serializeMessage(message: ChatMessageRow) {
-  const attachments = db.prepare("SELECT * FROM job_attachments WHERE chat_message_id = ? ORDER BY created_at ASC")
+  const jobAttachments = db.prepare("SELECT * FROM job_attachments WHERE chat_message_id = ? ORDER BY created_at ASC")
     .all(message.id) as AttachmentRow[];
+  const chatAttachments = db.prepare("SELECT * FROM chat_attachments WHERE chat_message_id = ? ORDER BY created_at ASC")
+    .all(message.id) as ChatAttachmentRow[];
   return {
     id: message.id,
     chatId: message.chat_id,
@@ -499,11 +502,25 @@ function serializeMessage(message: ChatMessageRow) {
     externalId: message.external_id,
     metadata: message.metadata_json ? JSON.parse(message.metadata_json) : undefined,
     createdAt: message.created_at,
-    attachments: attachments.map(serializeAttachment)
+    attachments: [
+      ...jobAttachments.map(serializeAttachment),
+      ...chatAttachments.map(serializeChatAttachment)
+    ]
   };
 }
 
 function serializeAttachment(attachment: AttachmentRow) {
+  return {
+    id: attachment.id,
+    name: attachment.name,
+    mimeType: attachment.mime_type,
+    size: attachment.size,
+    dataBase64: isPreviewableImageMime(attachment.mime_type) ? attachment.data_base64 : undefined,
+    createdAt: attachment.created_at
+  };
+}
+
+function serializeChatAttachment(attachment: ChatAttachmentRow) {
   return {
     id: attachment.id,
     name: attachment.name,
@@ -534,6 +551,32 @@ function storeJobAttachments(
     insert.run(
       id("att"),
       jobId,
+      messageId,
+      attachment.name,
+      attachment.mimeType,
+      attachment.size,
+      attachment.dataBase64,
+      createdAt
+    );
+  }
+}
+
+function replaceChatMessageAttachments(
+  messageId: string,
+  attachments: Array<{ name: string; mimeType: string; size: number; dataBase64: string }> | undefined,
+  createdAt: string
+): void {
+  db.prepare("DELETE FROM chat_attachments WHERE chat_message_id = ?").run(messageId);
+  const safeAttachments = (attachments ?? []).filter((attachment) => isPreviewableImageMime(attachment.mimeType));
+  const totalSize = safeAttachments.reduce((sum, attachment) => sum + attachment.size, 0);
+  if (!safeAttachments.length || totalSize > 12 * 1024 * 1024) return;
+  const insert = db.prepare(`
+    INSERT INTO chat_attachments (id,chat_message_id,name,mime_type,size,data_base64,created_at)
+    VALUES (?,?,?,?,?,?,?)
+  `);
+  for (const attachment of safeAttachments) {
+    insert.run(
+      id("att"),
       messageId,
       attachment.name,
       attachment.mimeType,
@@ -586,12 +629,18 @@ function upsertSyncedChat(agentId: string, sync: Extract<AgentToServer, { type: 
     if (existing) {
       db.prepare("UPDATE chat_messages SET role=?, content=?, metadata_json=?, created_at=? WHERE id=?")
         .run(message.role, message.content.slice(0, 200000), message.metadata ? JSON.stringify(message.metadata) : null, message.createdAt, existing.id);
+      replaceChatMessageAttachments(existing.id, message.attachments, message.createdAt);
     } else {
       const duplicate = db.prepare("SELECT id FROM chat_messages WHERE chat_id = ? AND role = ? AND content = ? LIMIT 1")
         .get(chat.id, message.role, message.content.slice(0, 200000)) as { id: string } | undefined;
-      if (duplicate) continue;
+      if (duplicate) {
+        replaceChatMessageAttachments(duplicate.id, message.attachments, message.createdAt);
+        continue;
+      }
+      const messageId = message.id ?? id("msg");
       db.prepare("INSERT INTO chat_messages (id,chat_id,role,content,source,external_id,metadata_json,created_at) VALUES (?,?,?,?,?,?,?,?)")
-        .run(message.id ?? id("msg"), chat.id, message.role, message.content.slice(0, 200000), message.source, message.externalId ?? null, message.metadata ? JSON.stringify(message.metadata) : null, message.createdAt);
+        .run(messageId, chat.id, message.role, message.content.slice(0, 200000), message.source, message.externalId ?? null, message.metadata ? JSON.stringify(message.metadata) : null, message.createdAt);
+      replaceChatMessageAttachments(messageId, message.attachments, message.createdAt);
     }
   }
   db.prepare("UPDATE chats SET updated_at = ? WHERE id = ?").run(sync.updatedAt || stamp, chat.id);

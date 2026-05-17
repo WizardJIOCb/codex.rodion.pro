@@ -1,10 +1,23 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { join, normalize } from "node:path";
+import { extname, join, normalize } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { AgentToServer, ChatMessage } from "@cmc/protocol";
 import type { AgentConfig, RepoConfig } from "./config.js";
 
 type Send = (message: AgentToServer) => void;
+type LocalAttachment = NonNullable<ChatMessage["attachments"]>[number];
+
+const MAX_ATTACHMENTS_PER_MESSAGE = 8;
+const MAX_ATTACHMENT_SIZE = 5 * 1024 * 1024;
+const IMAGE_MIME_BY_EXT = new Map([
+  [".png", "image/png"],
+  [".jpg", "image/jpeg"],
+  [".jpeg", "image/jpeg"],
+  [".gif", "image/gif"],
+  [".webp", "image/webp"],
+  [".avif", "image/avif"],
+  [".bmp", "image/bmp"]
+]);
 
 type LocalChat = {
   repoId: string;
@@ -103,7 +116,9 @@ function readCodexRollout(path: string): ChatMessage[] {
     const createdAt = typeof row.timestamp === "string" ? row.timestamp : new Date().toISOString();
     if (row.type === "response_item" && row.payload?.type === "message") {
       const role = normalizeRole(row.payload.role);
-      const content = textFromContent(row.payload.content);
+      const attachments = collectImageAttachments(row.payload.content);
+      const rawContent = textFromContent(row.payload.content);
+      const content = cleanSyncedContent(rawContent, attachments);
       if (role && content && !isCodexContextMessage(content)) {
         messages.push({
           role,
@@ -111,6 +126,7 @@ function readCodexRollout(path: string): ChatMessage[] {
           source: "codex",
           externalId: `${basename(path)}:${index}`,
           createdAt,
+          attachments,
           metadata: { localPath: path }
         });
       }
@@ -166,13 +182,16 @@ function readVsCodeFile(path: string): { id: string; title: string; cwd?: string
     cwd ??= findPathInObject(request);
     const at = timeFromNumber(request.timestamp ?? root.lastMessageDate ?? root.creationDate);
     const text = request.message?.text;
-    if (text) {
+    const userAttachments = collectImageAttachments(request.message ?? request);
+    const userContent = cleanSyncedContent(text ? String(text) : "", userAttachments);
+    if (userContent || userAttachments.length) {
       messages.push({
         role: "user",
-        content: String(text),
+        content: userContent || "Image attachment",
         source: "vscode",
         externalId: `${request.requestId}:user`,
-        createdAt: at
+        createdAt: at,
+        attachments: userAttachments
       });
     }
     const response = textFromVsCodeResponse(request.response);
@@ -229,6 +248,137 @@ function textFromContent(content: unknown): string {
     .filter(Boolean)
     .join("\n")
     .trim();
+}
+
+function cleanSyncedContent(content: string, attachments: LocalAttachment[]): string {
+  const cleaned = content
+    .replace(/<image>\s*<\/image>/gi, "")
+    .replace(/<image\s*\/>/gi, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return cleaned || (attachments.length ? "Image attachment" : "");
+}
+
+function collectImageAttachments(value: unknown): LocalAttachment[] {
+  const attachments: LocalAttachment[] = [];
+  const seen = new Set<string>();
+  const stack = [value];
+  const seenObjects = new Set<unknown>();
+
+  while (stack.length && attachments.length < MAX_ATTACHMENTS_PER_MESSAGE) {
+    const item: any = stack.pop();
+    if (!item) continue;
+    if (typeof item === "string") {
+      const fromDataUrl = attachmentFromDataUrl(item, seen);
+      if (fromDataUrl) attachments.push(fromDataUrl);
+      const fromPath = attachmentFromPath(item, seen);
+      if (fromPath) attachments.push(fromPath);
+      continue;
+    }
+    if (typeof item !== "object" || seenObjects.has(item)) continue;
+    seenObjects.add(item);
+
+    const directPath = typeof item.fsPath === "string" ? item.fsPath
+      : typeof item.path === "string" ? item.path
+        : typeof item.filePath === "string" ? item.filePath
+          : typeof item.uri?.fsPath === "string" ? item.uri.fsPath
+            : typeof item.uri?.path === "string" ? item.uri.path
+              : "";
+    const direct = directPath ? attachmentFromPath(directPath, seen) : undefined;
+    if (direct) attachments.push(direct);
+
+    const data = typeof item.data === "string" ? item.data
+      : typeof item.base64 === "string" ? item.base64
+        : typeof item.imageData === "string" ? item.imageData
+          : "";
+    const mimeType = typeof item.mimeType === "string" ? item.mimeType
+      : typeof item.mime === "string" ? item.mime
+        : typeof item.mediaType === "string" ? item.mediaType
+          : "";
+    if (data && isSupportedImageMime(mimeType)) {
+      const fromBase64 = attachmentFromBase64(data, mimeType, typeof item.name === "string" ? item.name : undefined, seen);
+      if (fromBase64) attachments.push(fromBase64);
+    }
+
+    for (const child of Object.values(item)) stack.push(child);
+  }
+
+  return attachments.slice(0, MAX_ATTACHMENTS_PER_MESSAGE);
+}
+
+function attachmentFromDataUrl(value: string, seen: Set<string>): LocalAttachment | undefined {
+  const match = value.match(/^data:(image\/(?:png|jpeg|gif|webp|avif|bmp));base64,([A-Za-z0-9+/]+={0,2})$/i);
+  if (!match?.[1] || !match[2]) return undefined;
+  return attachmentFromBase64(match[2], match[1].toLowerCase(), undefined, seen);
+}
+
+function attachmentFromBase64(value: string, mimeType: string, name: string | undefined, seen: Set<string>): LocalAttachment | undefined {
+  const dataBase64 = value.includes(",") ? value.slice(value.indexOf(",") + 1) : value;
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(dataBase64)) return undefined;
+  const size = Buffer.byteLength(dataBase64, "base64");
+  if (size <= 0 || size > MAX_ATTACHMENT_SIZE) return undefined;
+  const key = `${mimeType}:${size}:${dataBase64.slice(0, 80)}`;
+  if (seen.has(key)) return undefined;
+  seen.add(key);
+  return {
+    name: safeAttachmentName(name || `vscode-image-${Date.now()}.${extensionForMime(mimeType)}`),
+    mimeType,
+    size,
+    dataBase64
+  };
+}
+
+function attachmentFromPath(value: string, seen: Set<string>): LocalAttachment | undefined {
+  const path = localImagePath(value);
+  if (!path) return undefined;
+  let stat;
+  try {
+    stat = statSync(path);
+  } catch {
+    return undefined;
+  }
+  if (!stat.isFile() || stat.size <= 0 || stat.size > MAX_ATTACHMENT_SIZE) return undefined;
+  const mimeType = IMAGE_MIME_BY_EXT.get(extname(path).toLowerCase());
+  if (!mimeType) return undefined;
+  const key = `file:${path.toLowerCase()}:${stat.size}:${Math.round(stat.mtimeMs)}`;
+  if (seen.has(key)) return undefined;
+  seen.add(key);
+  return {
+    name: safeAttachmentName(basename(path)),
+    mimeType,
+    size: stat.size,
+    dataBase64: readFileSync(path).toString("base64")
+  };
+}
+
+function localImagePath(value: string): string | undefined {
+  const trimmed = value.trim().replace(/^file:\/\//i, "");
+  const decoded = safeDecodeURIComponent(trimmed).replace(/\//g, "\\");
+  const path = decoded.replace(/^\\([A-Za-z]:\\)/, "$1");
+  const mimeType = IMAGE_MIME_BY_EXT.get(extname(path).toLowerCase());
+  if (!mimeType || !/^[A-Za-z]:\\|^\\\\/.test(path)) return undefined;
+  return cleanPath(path);
+}
+
+function safeDecodeURIComponent(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function isSupportedImageMime(value: string): boolean {
+  return ["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/bmp"].includes(value.toLowerCase());
+}
+
+function extensionForMime(value: string): string {
+  if (value === "image/jpeg") return "jpg";
+  return value.replace(/^image\//, "") || "png";
+}
+
+function safeAttachmentName(value: string): string {
+  return basename(value).replace(/[<>:"/\\|?*\x00-\x1F]/g, "_").slice(0, 160) || "image.png";
 }
 
 function textFromVsCodeResponse(response: unknown): string {
