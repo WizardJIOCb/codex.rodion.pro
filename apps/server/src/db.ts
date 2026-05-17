@@ -6,6 +6,7 @@ export type UserRow = {
   id: string;
   email: string;
   password_hash: string;
+  role: "admin" | "user";
   created_at: string;
 };
 
@@ -19,6 +20,7 @@ export type SessionRow = {
 
 export type AgentRow = {
   id: string;
+  user_id: string | null;
   name: string;
   token_hash: string;
   hostname: string | null;
@@ -113,6 +115,7 @@ export function openDb(path: string): DatabaseSync {
       id TEXT PRIMARY KEY,
       email TEXT NOT NULL UNIQUE,
       password_hash TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'user',
       created_at TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS sessions (
@@ -124,6 +127,7 @@ export function openDb(path: string): DatabaseSync {
     );
     CREATE TABLE IF NOT EXISTS agents (
       id TEXT PRIMARY KEY,
+      user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
       token_hash TEXT NOT NULL,
       hostname TEXT,
@@ -218,6 +222,22 @@ export function openDb(path: string): DatabaseSync {
     CREATE INDEX IF NOT EXISTS idx_messages_chat_at ON chat_messages(chat_id, created_at);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_external ON chat_messages(chat_id, source, external_id) WHERE external_id IS NOT NULL;
   `);
+  const userColumns = db.prepare("PRAGMA table_info(users)").all() as Array<{ name: string }>;
+  if (!userColumns.some((column) => column.name === "role")) {
+    db.exec("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'");
+  }
+  const firstUser = db.prepare("SELECT id FROM users ORDER BY created_at ASC LIMIT 1").get() as { id: string } | undefined;
+  const adminUser = db.prepare("SELECT id FROM users WHERE role = 'admin' LIMIT 1").get() as { id: string } | undefined;
+  if (firstUser && !adminUser) {
+    db.prepare("UPDATE users SET role = 'admin' WHERE id = ?").run(firstUser.id);
+  }
+  const agentColumns = db.prepare("PRAGMA table_info(agents)").all() as Array<{ name: string }>;
+  if (!agentColumns.some((column) => column.name === "user_id")) {
+    db.exec("ALTER TABLE agents ADD COLUMN user_id TEXT");
+  }
+  if (firstUser) {
+    db.prepare("UPDATE agents SET user_id = ? WHERE user_id IS NULL").run(firstUser.id);
+  }
   const jobColumns = db.prepare("PRAGMA table_info(jobs)").all() as Array<{ name: string }>;
   if (!jobColumns.some((column) => column.name === "chat_id")) {
     db.exec("ALTER TABLE jobs ADD COLUMN chat_id TEXT");
@@ -238,7 +258,6 @@ export function openDb(path: string): DatabaseSync {
   if (!repoColumns.some((column) => column.name === "deploy_json")) {
     db.exec("ALTER TABLE repos ADD COLUMN deploy_json TEXT");
   }
-  const agentColumns = db.prepare("PRAGMA table_info(agents)").all() as Array<{ name: string }>;
   if (!agentColumns.some((column) => column.name === "codex_usage_json")) {
     db.exec("ALTER TABLE agents ADD COLUMN codex_usage_json TEXT");
   }

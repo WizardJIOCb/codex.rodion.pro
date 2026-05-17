@@ -34,6 +34,7 @@ const SANDBOX_LABELS: Record<Sandbox, string> = {
 
 type Agent = {
   id: string;
+  user_id?: string | null;
   name: string;
   hostname?: string;
   status: "online" | "offline";
@@ -49,6 +50,21 @@ type Agent = {
     remaining?: number;
     usedPercent?: number;
   };
+};
+
+type User = {
+  id: string;
+  email: string;
+  role: "admin" | "user";
+  createdAt?: string;
+};
+
+type AgentSetup = {
+  agentId: string;
+  serverUrl: string;
+  token: string;
+  configJson: string;
+  setupPowerShell: string;
 };
 
 type DeployConfig = {
@@ -363,6 +379,7 @@ function renderLogs(logs: Log[]) {
 
 function App() {
   const [csrf, setCsrf] = useState<string>();
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -404,6 +421,16 @@ function App() {
   const [sslBusy, setSslBusy] = useState(false);
   const [chatNotice, setChatNotice] = useState("");
   const [projectNotice, setProjectNotice] = useState("");
+  const [view, setView] = useState<"projects" | "settings">("projects");
+  const [users, setUsers] = useState<User[]>([]);
+  const [newUserEmail, setNewUserEmail] = useState("");
+  const [newUserPassword, setNewUserPassword] = useState("");
+  const [newUserRole, setNewUserRole] = useState<"admin" | "user">("user");
+  const [newAgentName, setNewAgentName] = useState("My Windows Agent");
+  const [newAgentId, setNewAgentId] = useState("");
+  const [newAgentUserId, setNewAgentUserId] = useState("");
+  const [agentSetup, setAgentSetup] = useState<AgentSetup | null>(null);
+  const [settingsNotice, setSettingsNotice] = useState("");
 
   const selectedRepo = useMemo(() => repos.find((repo) => `${repo.agentId}:${repo.id}` === repoKey), [repoKey, repos]);
   const activeChat = useMemo(() => chats.find((chat) => chat.id === activeChatId), [activeChatId, chats]);
@@ -429,6 +456,12 @@ function App() {
         clearProjectSelection();
       }
     }
+  }
+
+  async function loadUsers() {
+    if (currentUser?.role !== "admin") return;
+    const response = await api("/api/users");
+    if (response.ok) setUsers((await response.json()).users);
   }
 
   async function loadChats(repo: Repo, selectFirst = false) {
@@ -500,6 +533,7 @@ function App() {
   }
 
   function clearProjectSelection() {
+    setView("projects");
     setRepoKey("");
     setChats([]);
     setActiveChatId("");
@@ -512,6 +546,18 @@ function App() {
     setDeployNotice("");
     setNginxNotice("");
     setSslNotice("");
+  }
+
+  function openSettingsView() {
+    setView("settings");
+    setProjectPanel(null);
+    setRepoKey("");
+    setActiveChatId("");
+    setJobs([]);
+    setMessages([]);
+    setActiveJob(null);
+    setLogs([]);
+    loadUsers();
   }
 
   function openNewProject() {
@@ -549,6 +595,7 @@ function App() {
     api("/api/me").then(async (response) => {
       if (!response.ok) return;
       const data = await response.json();
+      setCurrentUser(data.user);
       setCsrf(data.csrfToken);
       refresh();
     });
@@ -590,6 +637,7 @@ function App() {
     setBusy(false);
     if (!response.ok) return;
     const data = await response.json();
+    setCurrentUser(data.user);
     setCsrf(data.csrfToken);
     refresh();
   }
@@ -828,9 +876,141 @@ function App() {
     await refresh();
   }
 
+  async function createUser(event: React.FormEvent) {
+    event.preventDefault();
+    if (!csrf || currentUser?.role !== "admin" || !newUserEmail.trim() || !newUserPassword) return;
+    setBusy(true);
+    setSettingsNotice("");
+    const response = await api("/api/users", {
+      method: "POST",
+      headers: { "x-csrf-token": csrf },
+      body: JSON.stringify({ email: newUserEmail.trim(), password: newUserPassword, role: newUserRole })
+    });
+    setBusy(false);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      setSettingsNotice(data.error || "User create failed.");
+      return;
+    }
+    setNewUserEmail("");
+    setNewUserPassword("");
+    setNewUserRole("user");
+    setSettingsNotice("User created.");
+    await loadUsers();
+  }
+
+  async function createAgent(event: React.FormEvent) {
+    event.preventDefault();
+    if (!csrf || !newAgentName.trim()) return;
+    setBusy(true);
+    setSettingsNotice("");
+    const response = await api("/api/agents", {
+      method: "POST",
+      headers: { "x-csrf-token": csrf },
+      body: JSON.stringify({
+        name: newAgentName.trim(),
+        id: newAgentId.trim() || undefined,
+        userId: currentUser?.role === "admin" ? newAgentUserId || undefined : undefined
+      })
+    });
+    setBusy(false);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      setSettingsNotice(data.error || "Agent create failed.");
+      return;
+    }
+    setAgentSetup(data.setup);
+    setNewAgentId("");
+    setSettingsNotice("Agent created. Save the setup script now; the token is shown only once.");
+    await refresh();
+  }
+
+  function renderSettings() {
+    return (
+      <section className="settings-work">
+        <section className="project-form wide">
+          <div className="section-head">
+            <h2><Settings size={18} /> Profile setup</h2>
+          </div>
+          <div className="notice">
+            Пользователь запускает Windows-agent у себя на ПК, логинится в Codex локально через <code>codex login</code>, а сайт только отправляет задачи его агенту.
+          </div>
+          <form className="settings-card" onSubmit={createAgent}>
+            <h2><Bot size={18} /> Create personal agent</h2>
+            <label>
+              Agent name
+              <input value={newAgentName} onChange={(event) => setNewAgentName(event.target.value)} />
+            </label>
+            <label>
+              Agent id, optional
+              <input placeholder="my-windows-agent" value={newAgentId} onChange={(event) => setNewAgentId(event.target.value)} />
+            </label>
+            {currentUser?.role === "admin" && (
+              <label>
+                Owner
+                <select value={newAgentUserId} onChange={(event) => setNewAgentUserId(event.target.value)}>
+                  <option value="">Me</option>
+                  {users.map((user) => <option key={user.id} value={user.id}>{user.email}</option>)}
+                </select>
+              </label>
+            )}
+            <button disabled={busy || !newAgentName.trim()} type="submit"><Plus size={16} /> Create agent & setup</button>
+          </form>
+          {agentSetup && (
+            <div className="settings-card">
+              <h2>Windows setup</h2>
+              <p>На ПК пользователя: установи Node.js LTS, Git, Codex CLI, выполни <code>codex login</code>, затем запусти этот PowerShell.</p>
+              <textarea className="code-textarea" readOnly value={agentSetup.setupPowerShell} />
+              <label>
+                Agent config
+                <textarea className="code-textarea small" readOnly value={agentSetup.configJson} />
+              </label>
+            </div>
+          )}
+          {currentUser?.role === "admin" && (
+            <form className="settings-card" onSubmit={createUser}>
+              <h2>Create user</h2>
+              <input autoComplete="off" placeholder="email" value={newUserEmail} onChange={(event) => setNewUserEmail(event.target.value)} />
+              <input autoComplete="new-password" placeholder="temporary password" type="password" value={newUserPassword} onChange={(event) => setNewUserPassword(event.target.value)} />
+              <select value={newUserRole} onChange={(event) => setNewUserRole(event.target.value as "admin" | "user")}>
+                <option value="user">user</option>
+                <option value="admin">admin</option>
+              </select>
+              <button disabled={busy || !newUserEmail.trim() || !newUserPassword} type="submit"><Plus size={16} /> Create user</button>
+            </form>
+          )}
+          {settingsNotice && <div className="notice">{settingsNotice}</div>}
+          {currentUser?.role === "admin" && (
+            <div className="settings-card">
+              <h2>Users</h2>
+              {users.map((user) => (
+                <div className="settings-row" key={user.id}>
+                  <span>{user.email}</span>
+                  <strong>{user.role}</strong>
+                </div>
+              ))}
+              {!users.length && <span className="small-empty">No users loaded.</span>}
+            </div>
+          )}
+          <div className="settings-card">
+            <h2>Agents</h2>
+            {agents.map((agent) => (
+              <div className="settings-row" key={agent.id}>
+                <span>{agent.name}</span>
+                <strong>{agent.status}</strong>
+              </div>
+            ))}
+            {!agents.length && <span className="small-empty">No agents yet.</span>}
+          </div>
+        </section>
+      </section>
+    );
+  }
+
   async function logout() {
     if (csrf) await api("/api/logout", { method: "POST", headers: { "x-csrf-token": csrf }, body: "{}" });
     setCsrf(undefined);
+    setCurrentUser(null);
   }
 
   function renderComposer() {
@@ -906,7 +1086,7 @@ function App() {
         </div>
         <nav>
           <div className="nav-group">
-            <button className="nav-item active" onClick={clearProjectSelection}><FolderGit2 size={17} /> Projects</button>
+            <button className={view === "projects" ? "nav-item active" : "nav-item"} onClick={clearProjectSelection}><FolderGit2 size={17} /> Projects</button>
             <div className="nav-subtree">
               {repos.map((repo) => {
                 const selected = selectedRepo?.agentId === repo.agentId && selectedRepo.id === repo.id;
@@ -942,7 +1122,7 @@ function App() {
             </div>
           </div>
           <button className="nav-item"><Activity size={17} /> Runs</button>
-          <button className="nav-item"><Settings size={17} /> Settings</button>
+          <button className={view === "settings" ? "nav-item active" : "nav-item"} onClick={openSettingsView}><Settings size={17} /> Settings</button>
         </nav>
         <div className="nav-agent">
           <span>{online ? "Online" : "Offline"}</span>
@@ -955,7 +1135,7 @@ function App() {
       <header className="topbar">
         <div>
           <span className={`status ${online ? "ok" : "bad"}`}>{online ? <Wifi size={16} /> : <WifiOff size={16} />} {online ? "Home PC online" : "Home PC offline"}</span>
-          <h1>{selectedRepo ? selectedRepo.name : "Projects"}</h1>
+          <h1>{view === "settings" ? "Settings" : selectedRepo ? selectedRepo.name : "Projects"}</h1>
         </div>
         <div className="top-actions">
           {selectedRepo && <button className="icon" onClick={clearProjectSelection} title="Проекты"><ArrowLeft size={18} /></button>}
@@ -974,7 +1154,9 @@ function App() {
         ))}
       </section>
 
-      {!selectedRepo && (
+      {view === "settings" && renderSettings()}
+
+      {view === "projects" && !selectedRepo && (
         <section className="project-picker">
           <div className="section-head">
             <h2><FolderGit2 size={18} /> Projects</h2>
@@ -999,7 +1181,7 @@ function App() {
         </section>
       )}
 
-      {projectPanel && (
+      {view === "projects" && projectPanel && (
         <form className="project-form" onSubmit={saveProject}>
           <div className="section-head">
             <h2>{projectPanel === "new" ? "New project" : "Project settings"}</h2>
@@ -1061,7 +1243,7 @@ function App() {
         </form>
       )}
 
-      {selectedRepo && (
+      {view === "projects" && selectedRepo && (
         <section className="project-workspace">
 
           <section className="chat-work">

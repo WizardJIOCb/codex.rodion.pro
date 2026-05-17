@@ -344,6 +344,20 @@ export type Nginx = z.infer<typeof NginxSchema>;
 export const SslSchema = z.object({});
 export type Ssl = z.infer<typeof SslSchema>;
 
+export const CreateUserSchema = z.object({
+  email: z.string().email().max(200),
+  password: z.string().min(8).max(200),
+  role: z.enum(["admin", "user"]).default("user")
+});
+export type CreateUser = z.infer<typeof CreateUserSchema>;
+
+export const CreateAgentSchema = z.object({
+  id: z.string().min(3).max(80).regex(/^[a-z0-9_-]+$/i).optional(),
+  name: z.string().min(1).max(120),
+  userId: z.string().min(1).optional()
+});
+export type CreateAgent = z.infer<typeof CreateAgentSchema>;
+
 export const UiEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("agent.status"), agentId: z.string(), status: z.enum(["online", "offline"]) }),
   z.object({ type: z.literal("repos.updated"), agentId: z.string(), repos: z.array(RepoInfoSchema) }),

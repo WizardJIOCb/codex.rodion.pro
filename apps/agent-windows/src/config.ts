@@ -44,7 +44,7 @@ const AgentConfigSchema = z.object({
   cancelGraceMs: z.number().int().positive().default(5000),
   maxLogBytesPerJob: z.number().int().positive().default(10485760),
   fakeRunner: z.boolean().optional(),
-  repos: z.array(RepoConfigSchema).min(1),
+  repos: z.array(RepoConfigSchema).default([]),
   redactPatterns: z.array(z.string()).default([])
 });
 

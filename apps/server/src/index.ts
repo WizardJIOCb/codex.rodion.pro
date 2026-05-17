@@ -3,15 +3,17 @@ import { resolve } from "node:path";
 import fastifyCookie from "@fastify/cookie";
 import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
-import Fastify, { type FastifyInstance } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyReply } from "fastify";
 import bcrypt from "bcryptjs";
 import {
   AgentToServerSchema,
+  CreateAgentSchema,
   CreateChatSchema,
   DeploySchema,
   GitSyncSchema,
   CreateJobSchema,
   CreateProjectSchema,
+  CreateUserSchema,
   NginxSchema,
   SslSchema,
   UpdateProjectSchema,
@@ -39,6 +41,8 @@ import {
   clearSessionCookie,
   createSession,
   getSession,
+  hashSecret,
+  randomToken,
   requireAuth,
   requireCsrf,
   setSessionCookie,
@@ -54,7 +58,8 @@ type AgentConnection = {
 };
 
 const agents = new Map<string, AgentConnection>();
-const uiClients = new Set<{ send: (event: UiEvent) => void }>();
+type AuthUser = Pick<UserRow, "id" | "role">;
+const uiClients = new Set<{ user: AuthUser; send: (event: UiEvent) => void }>();
 const projectRequests = new Map<string, {
   resolve: (value: Extract<AgentToServer, { type: "project.result" }>) => void;
   reject: (error: Error) => void;
@@ -82,8 +87,79 @@ const sslRequests = new Map<string, {
 }>();
 const STALE_JOB_GRACE_MS = 2 * 60 * 1000;
 
+function isAdmin(user: AuthUser): boolean {
+  return user.role === "admin";
+}
+
+function agentAccessWhere(user: AuthUser): string {
+  return isAdmin(user) ? "" : "WHERE user_id = ?";
+}
+
+function agentAccessArgs(user: AuthUser): string[] {
+  return isAdmin(user) ? [] : [user.id];
+}
+
+function canAccessAgent(user: AuthUser, agentId: string): boolean {
+  if (isAdmin(user)) return true;
+  const row = db.prepare("SELECT 1 FROM agents WHERE id = ? AND user_id = ?").get(agentId, user.id) as { 1: number } | undefined;
+  return Boolean(row);
+}
+
+function requireAdminUser(auth: { user: UserRow }, reply: FastifyReply): boolean {
+  if (auth.user.role === "admin") return true;
+  reply.code(403).send({ error: "admin_required" });
+  return false;
+}
+
+function visibleAgentIds(user: AuthUser): string[] {
+  const rows = isAdmin(user)
+    ? db.prepare("SELECT id FROM agents").all() as Array<{ id: string }>
+    : db.prepare("SELECT id FROM agents WHERE user_id = ?").all(user.id) as Array<{ id: string }>;
+  return rows.map((row) => row.id);
+}
+
+function canAccessRepo(user: AuthUser, agentId: string, repoId: string): boolean {
+  const row = db.prepare(`
+    SELECT 1 FROM repos r
+    JOIN agents a ON a.id = r.agent_id
+    WHERE r.agent_id = ? AND r.id = ? ${isAdmin(user) ? "" : "AND a.user_id = ?"}
+  `).get(agentId, repoId, ...(isAdmin(user) ? [] : [user.id])) as { 1: number } | undefined;
+  return Boolean(row);
+}
+
+function canAccessChat(user: AuthUser, chatId: string): boolean {
+  const row = db.prepare(`
+    SELECT 1 FROM chats c
+    JOIN agents a ON a.id = c.agent_id
+    WHERE c.id = ? ${isAdmin(user) ? "" : "AND a.user_id = ?"}
+  `).get(chatId, ...(isAdmin(user) ? [] : [user.id])) as { 1: number } | undefined;
+  return Boolean(row);
+}
+
+function canAccessJob(user: AuthUser, jobId: string): boolean {
+  const row = db.prepare(`
+    SELECT 1 FROM jobs j
+    JOIN agents a ON a.id = j.agent_id
+    WHERE j.id = ? ${isAdmin(user) ? "" : "AND a.user_id = ?"}
+  `).get(jobId, ...(isAdmin(user) ? [] : [user.id])) as { 1: number } | undefined;
+  return Boolean(row);
+}
+
+function eventAgentId(event: UiEvent): string | undefined {
+  if ("agentId" in event) return event.agentId;
+  if ("jobId" in event) {
+    const row = db.prepare("SELECT agent_id FROM jobs WHERE id = ?").get(event.jobId) as { agent_id: string } | undefined;
+    return row?.agent_id;
+  }
+  return undefined;
+}
+
 function broadcast(event: UiEvent): void {
-  for (const client of uiClients) client.send(event);
+  const agentId = eventAgentId(event);
+  for (const client of uiClients) {
+    if (agentId && !canAccessAgent(client.user, agentId)) continue;
+    client.send(event);
+  }
 }
 
 function sendAgent(agentId: string, message: ServerToAgent): boolean {
@@ -446,6 +522,63 @@ function projectIdFromName(name: string): string {
   return slug || id("project");
 }
 
+function agentIdFromName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 54) || id("agent");
+}
+
+function uniqueAgentId(preferred: string): string {
+  let candidate = preferred;
+  let index = 2;
+  while (db.prepare("SELECT 1 FROM agents WHERE id = ?").get(candidate)) {
+    candidate = `${preferred.slice(0, 48)}-${index}`;
+    index += 1;
+  }
+  return candidate;
+}
+
+function agentSetupPayload(request: { protocol: string; hostname: string }, agentId: string, token: string) {
+  const wsProtocol = request.protocol === "https" ? "wss" : "ws";
+  const serverUrl = `${wsProtocol}://${request.hostname}/api/agent/ws`;
+  const configJson = JSON.stringify({
+    agentId,
+    serverUrl,
+    tokenEnv: "CMC_AGENT_TOKEN",
+    heartbeatIntervalMs: 20000,
+    maxJobDurationMs: 3600000,
+    cancelGraceMs: 5000,
+    maxLogBytesPerJob: 10485760,
+    fakeRunner: false,
+    repos: [],
+    redactPatterns: [
+      "sk-[A-Za-z0-9_-]+",
+      "ghp_[A-Za-z0-9_]+",
+      "OPENAI_API_KEY=\\S+",
+      "cmc_agent_[A-Za-z0-9_-]+"
+    ]
+  }, null, 2);
+  const encodedConfig = Buffer.from(configJson, "utf8").toString("base64");
+  const setupPowerShell = [
+    "$ErrorActionPreference = \"Stop\"",
+    "$Root = Join-Path $env:USERPROFILE \"codex.rodion.pro\"",
+    "if (-not (Get-Command git.exe -ErrorAction SilentlyContinue)) { throw \"Install Git for Windows first.\" }",
+    "if (-not (Get-Command node.exe -ErrorAction SilentlyContinue)) { throw \"Install Node.js LTS first.\" }",
+    "if (-not (Get-Command codex.cmd -ErrorAction SilentlyContinue)) { throw \"Install Codex CLI and run: codex login\" }",
+    "if (-not (Test-Path $Root)) { git clone https://github.com/WizardJIOCb/codex.rodion.pro.git $Root }",
+    "Set-Location $Root",
+    "corepack pnpm install",
+    "corepack pnpm build",
+    `[Environment]::SetEnvironmentVariable("CMC_AGENT_TOKEN", "${token}", "User")`,
+    `$config = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("${encodedConfig}"))`,
+    "$config | Set-Content -Path \"apps/agent-windows/agent.config.json\" -Encoding UTF8",
+    ".\\start-agent.bat"
+  ].join("\n");
+  return { agentId, serverUrl, token, configJson, setupPowerShell };
+}
+
 async function createApp(): Promise<FastifyInstance> {
   const app = Fastify({ logger: true, trustProxy: true });
   await app.register(fastifyCookie);
@@ -463,7 +596,7 @@ async function createApp(): Promise<FastifyInstance> {
   app.get("/api/me", async (request, reply) => {
     const auth = getSession(db, request);
     if (!auth) return reply.code(401).send({ user: null });
-    return { user: { id: auth.user.id, email: auth.user.email }, csrfToken: auth.session.csrf_token };
+    return { user: { id: auth.user.id, email: auth.user.email, role: auth.user.role }, csrfToken: auth.session.csrf_token };
   });
 
   app.post("/api/login", async (request, reply) => {
@@ -476,7 +609,7 @@ async function createApp(): Promise<FastifyInstance> {
     }
     const session = await createSession(db, user.id);
     setSessionCookie(reply, config, session.id);
-    return { user: { id: user.id, email: user.email }, csrfToken: session.csrf_token };
+    return { user: { id: user.id, email: user.email, role: user.role }, csrfToken: session.csrf_token };
   });
 
   app.post("/api/logout", async (request, reply) => {
@@ -487,23 +620,69 @@ async function createApp(): Promise<FastifyInstance> {
     return { ok: true };
   });
 
+  app.get("/api/users", async (request, reply) => {
+    const auth = requireAuth(db, request, reply);
+    if (!auth || !requireAdminUser(auth, reply)) return;
+    const rows = db.prepare("SELECT id,email,role,created_at FROM users ORDER BY created_at").all() as UserRow[];
+    return { users: rows.map((user) => ({ id: user.id, email: user.email, role: user.role, createdAt: user.created_at })) };
+  });
+
+  app.post("/api/users", async (request, reply) => {
+    const auth = requireAuth(db, request, reply);
+    if (!auth || !requireCsrf(db, request, reply) || !requireAdminUser(auth, reply)) return;
+    const parsed = CreateUserSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_user", details: parsed.error.flatten() });
+    const email = parsed.data.email.trim().toLowerCase();
+    const existing = db.prepare("SELECT id FROM users WHERE email = ?").get(email) as { id: string } | undefined;
+    if (existing) return reply.code(409).send({ error: "user_exists" });
+    const userId = id("usr");
+    db.prepare("INSERT INTO users (id,email,password_hash,role,created_at) VALUES (?,?,?,?,?)")
+      .run(userId, email, await hashSecret(parsed.data.password), parsed.data.role, nowIso());
+    return reply.code(201).send({ user: { id: userId, email, role: parsed.data.role } });
+  });
+
+  app.post("/api/agents", async (request, reply) => {
+    const auth = requireAuth(db, request, reply);
+    if (!auth || !requireCsrf(db, request, reply)) return;
+    const parsed = CreateAgentSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_agent", details: parsed.error.flatten() });
+    const ownerId = parsed.data.userId && isAdmin(auth.user) ? parsed.data.userId : auth.user.id;
+    const owner = db.prepare("SELECT id FROM users WHERE id = ?").get(ownerId) as { id: string } | undefined;
+    if (!owner) return reply.code(404).send({ error: "user_not_found" });
+    const agentId = uniqueAgentId(parsed.data.id?.trim() || agentIdFromName(parsed.data.name));
+    const token = randomToken("cmc_agent");
+    db.prepare("INSERT INTO agents (id,user_id,name,token_hash,status,created_at) VALUES (?,?,?,?,?,?)")
+      .run(agentId, ownerId, parsed.data.name.trim(), await hashSecret(token), "offline", nowIso());
+    const setup = agentSetupPayload({ protocol: request.protocol, hostname: request.hostname }, agentId, token);
+    return reply.code(201).send({ agent: { id: agentId, name: parsed.data.name.trim(), userId: ownerId }, setup });
+  });
+
   app.get("/api/agents", async (request, reply) => {
-    if (!requireAuth(db, request, reply)) return;
-    const rows = db.prepare("SELECT id,name,hostname,os,agent_version,codex_version,git_version,codex_usage_json,status,current_job_id,last_seen_at,created_at FROM agents ORDER BY created_at")
-      .all() as AgentRow[];
+    const auth = requireAuth(db, request, reply);
+    if (!auth) return;
+    const rows = db.prepare(`SELECT id,user_id,name,hostname,os,agent_version,codex_version,git_version,codex_usage_json,status,current_job_id,last_seen_at,created_at FROM agents ${agentAccessWhere(auth.user)} ORDER BY created_at`)
+      .all(...agentAccessArgs(auth.user)) as AgentRow[];
     return { agents: rows.map((row) => ({ ...row, codexUsage: parseCodexUsage(row.codex_usage_json) })) };
   });
 
   app.get("/api/repos", async (request, reply) => {
-    if (!requireAuth(db, request, reply)) return;
-    const rows = db.prepare("SELECT * FROM repos ORDER BY name").all() as RepoRow[];
+    const auth = requireAuth(db, request, reply);
+    if (!auth) return;
+    const rows = db.prepare(`
+      SELECT r.* FROM repos r
+      JOIN agents a ON a.id = r.agent_id
+      ${isAdmin(auth.user) ? "" : "WHERE a.user_id = ?"}
+      ORDER BY r.name
+    `).all(...(isAdmin(auth.user) ? [] : [auth.user.id])) as RepoRow[];
     return { repos: rows.map((row) => ({ ...mapRepo(row), agentId: row.agent_id, updatedAt: row.updated_at })) };
   });
 
   app.post("/api/projects", async (request, reply) => {
-    if (!requireCsrf(db, request, reply)) return;
+    const auth = requireAuth(db, request, reply);
+    if (!auth || !requireCsrf(db, request, reply)) return;
     const parsed = CreateProjectSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_project", details: parsed.error.flatten() });
+    if (!canAccessAgent(auth.user, parsed.data.agentId)) return reply.code(404).send({ error: "agent_not_found" });
     let repoId = projectIdFromName(parsed.data.name);
     const existing = db.prepare("SELECT * FROM repos WHERE agent_id = ? AND id = ?")
       .get(parsed.data.agentId, repoId) as RepoRow | undefined;
@@ -533,8 +712,10 @@ async function createApp(): Promise<FastifyInstance> {
   });
 
   app.put("/api/projects/:agentId/:repoId", async (request, reply) => {
-    if (!requireCsrf(db, request, reply)) return;
+    const auth = requireAuth(db, request, reply);
+    if (!auth || !requireCsrf(db, request, reply)) return;
     const params = request.params as { agentId: string; repoId: string };
+    if (!canAccessRepo(auth.user, params.agentId, params.repoId)) return reply.code(404).send({ error: "repo_not_found" });
     const parsed = UpdateProjectSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_project", details: parsed.error.flatten() });
     try {
@@ -553,8 +734,10 @@ async function createApp(): Promise<FastifyInstance> {
   });
 
   app.delete("/api/projects/:agentId/:repoId", async (request, reply) => {
-    if (!requireCsrf(db, request, reply)) return;
+    const auth = requireAuth(db, request, reply);
+    if (!auth || !requireCsrf(db, request, reply)) return;
     const params = request.params as { agentId: string; repoId: string };
+    if (!canAccessRepo(auth.user, params.agentId, params.repoId)) return reply.code(404).send({ error: "repo_not_found" });
     const repo = db.prepare("SELECT * FROM repos WHERE agent_id = ? AND id = ?")
       .get(params.agentId, params.repoId) as RepoRow | undefined;
     if (!repo) return reply.code(404).send({ error: "repo_not_found" });
@@ -594,8 +777,10 @@ async function createApp(): Promise<FastifyInstance> {
   });
 
   app.post("/api/projects/:agentId/:repoId/git-sync", async (request, reply) => {
-    if (!requireCsrf(db, request, reply)) return;
+    const auth = requireAuth(db, request, reply);
+    if (!auth || !requireCsrf(db, request, reply)) return;
     const params = request.params as { agentId: string; repoId: string };
+    if (!canAccessRepo(auth.user, params.agentId, params.repoId)) return reply.code(404).send({ error: "repo_not_found" });
     const parsed = GitSyncSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_git_sync", details: parsed.error.flatten() });
     const repo = db.prepare("SELECT * FROM repos WHERE agent_id = ? AND id = ?")
@@ -618,8 +803,10 @@ async function createApp(): Promise<FastifyInstance> {
   });
 
   app.post("/api/projects/:agentId/:repoId/deploy", async (request, reply) => {
-    if (!requireCsrf(db, request, reply)) return;
+    const auth = requireAuth(db, request, reply);
+    if (!auth || !requireCsrf(db, request, reply)) return;
     const params = request.params as { agentId: string; repoId: string };
+    if (!canAccessRepo(auth.user, params.agentId, params.repoId)) return reply.code(404).send({ error: "repo_not_found" });
     const parsed = DeploySchema.safeParse(request.body ?? {});
     if (!parsed.success) return reply.code(400).send({ error: "invalid_deploy", details: parsed.error.flatten() });
     const repo = db.prepare("SELECT * FROM repos WHERE agent_id = ? AND id = ?")
@@ -640,8 +827,10 @@ async function createApp(): Promise<FastifyInstance> {
   });
 
   app.post("/api/projects/:agentId/:repoId/nginx", async (request, reply) => {
-    if (!requireCsrf(db, request, reply)) return;
+    const auth = requireAuth(db, request, reply);
+    if (!auth || !requireCsrf(db, request, reply)) return;
     const params = request.params as { agentId: string; repoId: string };
+    if (!canAccessRepo(auth.user, params.agentId, params.repoId)) return reply.code(404).send({ error: "repo_not_found" });
     const parsed = NginxSchema.safeParse(request.body ?? {});
     if (!parsed.success) return reply.code(400).send({ error: "invalid_nginx", details: parsed.error.flatten() });
     const repo = db.prepare("SELECT * FROM repos WHERE agent_id = ? AND id = ?")
@@ -662,8 +851,10 @@ async function createApp(): Promise<FastifyInstance> {
   });
 
   app.post("/api/projects/:agentId/:repoId/ssl", async (request, reply) => {
-    if (!requireCsrf(db, request, reply)) return;
+    const auth = requireAuth(db, request, reply);
+    if (!auth || !requireCsrf(db, request, reply)) return;
     const params = request.params as { agentId: string; repoId: string };
+    if (!canAccessRepo(auth.user, params.agentId, params.repoId)) return reply.code(404).send({ error: "repo_not_found" });
     const parsed = SslSchema.safeParse(request.body ?? {});
     if (!parsed.success) return reply.code(400).send({ error: "invalid_ssl", details: parsed.error.flatten() });
     const repo = db.prepare("SELECT * FROM repos WHERE agent_id = ? AND id = ?")
@@ -684,18 +875,22 @@ async function createApp(): Promise<FastifyInstance> {
   });
 
   app.get("/api/chats", async (request, reply) => {
-    if (!requireAuth(db, request, reply)) return;
+    const auth = requireAuth(db, request, reply);
+    if (!auth) return;
     const query = request.query as { agentId?: string; repoId?: string };
     if (!query.agentId || !query.repoId) return reply.code(400).send({ error: "agent_and_repo_required" });
+    if (!canAccessRepo(auth.user, query.agentId, query.repoId)) return reply.code(404).send({ error: "repo_not_found" });
     const rows = db.prepare("SELECT * FROM chats WHERE agent_id = ? AND repo_id = ? ORDER BY updated_at DESC")
       .all(query.agentId, query.repoId) as ChatRow[];
     return { chats: rows.map(serializeChat) };
   });
 
   app.post("/api/chats", async (request, reply) => {
-    if (!requireCsrf(db, request, reply)) return;
+    const auth = requireAuth(db, request, reply);
+    if (!auth || !requireCsrf(db, request, reply)) return;
     const parsed = CreateChatSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_chat", details: parsed.error.flatten() });
+    if (!canAccessRepo(auth.user, parsed.data.agentId, parsed.data.repoId)) return reply.code(404).send({ error: "repo_not_found" });
     const repo = db.prepare("SELECT * FROM repos WHERE agent_id = ? AND id = ?")
       .get(parsed.data.agentId, parsed.data.repoId) as RepoRow | undefined;
     if (!repo) return reply.code(404).send({ error: "repo_not_found" });
@@ -717,8 +912,10 @@ async function createApp(): Promise<FastifyInstance> {
   });
 
   app.get("/api/chats/:id", async (request, reply) => {
-    if (!requireAuth(db, request, reply)) return;
+    const auth = requireAuth(db, request, reply);
+    if (!auth) return;
     const chatId = (request.params as { id: string }).id;
+    if (!canAccessChat(auth.user, chatId)) return reply.code(404).send({ error: "not_found" });
     const chat = db.prepare("SELECT * FROM chats WHERE id = ?").get(chatId) as ChatRow | undefined;
     if (!chat) return reply.code(404).send({ error: "not_found" });
     const rows = db.prepare("SELECT * FROM jobs WHERE chat_id = ? ORDER BY created_at DESC").all(chatId) as JobRow[];
@@ -727,8 +924,10 @@ async function createApp(): Promise<FastifyInstance> {
   });
 
   app.delete("/api/chats/:id", async (request, reply) => {
-    if (!requireCsrf(db, request, reply)) return;
+    const auth = requireAuth(db, request, reply);
+    if (!auth || !requireCsrf(db, request, reply)) return;
     const chatId = (request.params as { id: string }).id;
+    if (!canAccessChat(auth.user, chatId)) return reply.code(404).send({ error: "not_found" });
     const chat = db.prepare("SELECT * FROM chats WHERE id = ?").get(chatId) as ChatRow | undefined;
     if (!chat) return reply.code(404).send({ error: "not_found" });
     const active = db.prepare("SELECT id FROM jobs WHERE chat_id = ? AND status IN ('queued','assigned','running') LIMIT 1")
@@ -752,17 +951,26 @@ async function createApp(): Promise<FastifyInstance> {
   });
 
   app.get("/api/jobs", async (request, reply) => {
-    if (!requireAuth(db, request, reply)) return;
+    const auth = requireAuth(db, request, reply);
+    if (!auth) return;
     const query = request.query as { chatId?: string };
+    if (query.chatId && !canAccessChat(auth.user, query.chatId)) return reply.code(404).send({ error: "chat_not_found" });
     const rows = query.chatId
       ? db.prepare("SELECT * FROM jobs WHERE chat_id = ? ORDER BY created_at DESC LIMIT 50").all(query.chatId) as JobRow[]
-      : db.prepare("SELECT * FROM jobs ORDER BY created_at DESC LIMIT 50").all() as JobRow[];
+      : db.prepare(`
+          SELECT j.* FROM jobs j
+          JOIN agents a ON a.id = j.agent_id
+          ${isAdmin(auth.user) ? "" : "WHERE a.user_id = ?"}
+          ORDER BY j.created_at DESC LIMIT 50
+        `).all(...(isAdmin(auth.user) ? [] : [auth.user.id])) as JobRow[];
     return { jobs: rows.map(serializeJob) };
   });
 
   app.get("/api/jobs/:id", async (request, reply) => {
-    if (!requireAuth(db, request, reply)) return;
+    const auth = requireAuth(db, request, reply);
+    if (!auth) return;
     const jobId = (request.params as { id: string }).id;
+    if (!canAccessJob(auth.user, jobId)) return reply.code(404).send({ error: "not_found" });
     const job = db.prepare("SELECT * FROM jobs WHERE id = ?").get(jobId) as JobRow | undefined;
     if (!job) return reply.code(404).send({ error: "not_found" });
     const logs = db.prepare("SELECT * FROM job_logs WHERE job_id = ? ORDER BY at ASC").all(jobId) as LogRow[];
@@ -770,9 +978,11 @@ async function createApp(): Promise<FastifyInstance> {
   });
 
   app.post("/api/jobs", async (request, reply) => {
-    if (!requireCsrf(db, request, reply)) return;
+    const auth = requireAuth(db, request, reply);
+    if (!auth || !requireCsrf(db, request, reply)) return;
     const parsed = CreateJobSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_job", details: parsed.error.flatten() });
+    if (!canAccessRepo(auth.user, parsed.data.agentId, parsed.data.repoId)) return reply.code(404).send({ error: "repo_not_found" });
     const repo = db.prepare("SELECT * FROM repos WHERE agent_id = ? AND id = ?")
       .get(parsed.data.agentId, parsed.data.repoId) as RepoRow | undefined;
     if (!repo) return reply.code(404).send({ error: "repo_not_found" });
@@ -814,8 +1024,10 @@ async function createApp(): Promise<FastifyInstance> {
   });
 
   app.post("/api/jobs/:id/cancel", async (request, reply) => {
-    if (!requireCsrf(db, request, reply)) return;
+    const auth = requireAuth(db, request, reply);
+    if (!auth || !requireCsrf(db, request, reply)) return;
     const jobId = (request.params as { id: string }).id;
+    if (!canAccessJob(auth.user, jobId)) return reply.code(404).send({ error: "not_found" });
     const job = db.prepare("SELECT * FROM jobs WHERE id = ?").get(jobId) as JobRow | undefined;
     if (!job) return reply.code(404).send({ error: "not_found" });
     if (!["queued", "assigned", "running"].includes(job.status)) return { ok: true };
@@ -836,6 +1048,7 @@ async function createApp(): Promise<FastifyInstance> {
       return;
     }
     const client = {
+      user: { id: auth.user.id, role: auth.user.role },
       send: (event: UiEvent) => {
         if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(event));
       }
