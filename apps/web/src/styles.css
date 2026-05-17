@@ -1019,7 +1019,9 @@ textarea:focus {
 }
 
 .action-menu {
-  width: 270px;
+  left: auto;
+  right: 0;
+  width: min(270px, calc(100vw - 28px));
   max-height: min(70vh, 560px);
   overflow: auto;
 }
@@ -1499,6 +1501,11 @@ h2 {
   border-top: 1px solid var(--line);
 }
 
+.progress-wrap {
+  display: grid;
+  gap: 6px;
+}
+
 .progress-panel {
   display: flex;
   align-items: center;
@@ -1558,6 +1565,43 @@ h2 {
 .progress-stats {
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.progress-files {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.progress-files div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 7px 9px;
+}
+
+.progress-files div + div {
+  border-top: 1px solid var(--line);
+}
+
+.progress-files span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.progress-files small {
+  color: var(--accent-2);
+  font-weight: 800;
+}
+
+.current-edit {
+  padding: 0 10px;
 }
 
 .progress-stats span,

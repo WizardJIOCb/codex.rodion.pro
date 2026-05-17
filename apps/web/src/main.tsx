@@ -244,6 +244,11 @@ type JobProgress = {
   filesChanged?: number;
   added?: number;
   deleted?: number;
+  files?: Array<{
+    path: string;
+    added: number;
+    deleted: number;
+  }>;
   at: string;
 };
 
@@ -707,8 +712,10 @@ function App() {
     filesChanged: 0,
     added: 0,
     deleted: 0,
+    files: [],
     at: new Date().toISOString()
   } : null;
+  const firstActiveProgressFile = activeProgress?.files?.[0];
 
   async function refresh() {
     const [agentResponse, repoResponse] = await Promise.all([api("/api/agents"), api("/api/repos")]);
@@ -2266,18 +2273,48 @@ function App() {
                           <strong>{activeJob.prompt}</strong>
                         </div>
                         {activeProgress && (
-                          <div className="progress-panel">
-                            <div>
-                              <span className="progress-label">{activeProgress.phase}</span>
-                              <strong>{activeProgress.message}</strong>
+                          <div className="progress-wrap">
+                            <div className="progress-panel">
+                              <div>
+                                <span className="progress-label">{activeProgress.phase}</span>
+                                <strong>{activeProgress.message}</strong>
+                              </div>
+                              <div className="progress-stats">
+                                <span>{activeProgress.filesChanged ?? 0} files</span>
+                                <span>+{activeProgress.added ?? 0}</span>
+                                <span>-{activeProgress.deleted ?? 0}</span>
+                              </div>
                             </div>
-                            <div className="progress-stats">
-                              <span>{activeProgress.filesChanged ?? 0} files</span>
-                              <span>+{activeProgress.added ?? 0}</span>
-                              <span>-{activeProgress.deleted ?? 0}</span>
-                            </div>
+                            {activeProgress.files?.length ? (
+                              <div className="progress-files">
+                                {(activeProgress.files ?? []).slice(0, 8).map((file) => (
+                                  <div key={file.path}>
+                                    <span>{file.path}</span>
+                                    <small>+{file.added} -{file.deleted}</small>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : null}
                           </div>
                         )}
+                        {firstActiveProgressFile && activeRunBusy ? (
+                          <div className="message-actions current-edit">
+                            <button type="button" onClick={() => setExpandedActions((current) => ({ ...current, currentProgress: !current.currentProgress }))}>
+                              <Wrench size={15} />
+                              <span>Editing {firstActiveProgressFile.path} +{firstActiveProgressFile.added} -{firstActiveProgressFile.deleted}</span>
+                            </button>
+                            {expandedActions.currentProgress && (
+                              <div className="message-action-details">
+                                {(activeProgress.files ?? []).slice(0, 8).map((file) => (
+                                  <div key={file.path}>
+                                    <span>{file.path}</span>
+                                    <small>+{file.added} -{file.deleted}</small>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ) : null}
                         {renderJobCompletion(activeJob, activeProgress)}
                         {activeJob.gitDiffStat && (
                           <div className="edited-card">

@@ -107,6 +107,12 @@ export const AgentJobLogSchema = z.object({
   at: z.string().datetime()
 });
 
+export const JobProgressFileSchema = z.object({
+  path: z.string().min(1).max(500),
+  added: z.number().int().nonnegative(),
+  deleted: z.number().int().nonnegative()
+});
+
 export const AgentJobProgressSchema = z.object({
   type: z.literal("job.progress"),
   jobId: z.string().min(1),
@@ -115,6 +121,7 @@ export const AgentJobProgressSchema = z.object({
   filesChanged: z.number().int().nonnegative().optional(),
   added: z.number().int().nonnegative().optional(),
   deleted: z.number().int().nonnegative().optional(),
+  files: z.array(JobProgressFileSchema).max(50).optional(),
   at: z.string().datetime()
 });
 

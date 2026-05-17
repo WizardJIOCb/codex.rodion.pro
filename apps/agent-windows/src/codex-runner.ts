@@ -58,7 +58,7 @@ export class Runner {
     ];
     for (const line of lines) {
       if (this.cancelled) break;
-      context.sendProgress(progress(context.job.id, "fake", line, { filesChanged: 0, added: 0, deleted: 0 }));
+      context.sendProgress(progress(context.job.id, "fake", line, { filesChanged: 0, added: 0, deleted: 0, files: [] }));
       context.sendLog(log(context.job.id, "stdout", line));
       await new Promise((resolve) => setTimeout(resolve, 700));
     }
@@ -268,25 +268,38 @@ function progress(
   jobId: string,
   phase: string,
   message: string,
-  stats?: { filesChanged: number; added: number; deleted: number }
+  stats?: DiffProgress
 ): AgentJobProgress {
   return { type: "job.progress", jobId, phase, message, at: new Date().toISOString(), ...stats };
 }
 
-async function diffProgress(repoPath: string): Promise<{ filesChanged: number; added: number; deleted: number }> {
+type DiffProgress = {
+  filesChanged: number;
+  added: number;
+  deleted: number;
+  files: Array<{ path: string; added: number; deleted: number }>;
+};
+
+async function diffProgress(repoPath: string): Promise<DiffProgress> {
   const result = await runCapture("git", ["-C", repoPath, "diff", "--numstat"], undefined, 15000);
   let filesChanged = 0;
   let added = 0;
   let deleted = 0;
+  const files: DiffProgress["files"] = [];
   for (const line of result.stdout.split(/\r?\n/).filter(Boolean)) {
-    const [add, del] = line.split(/\s+/);
+    const [add, del, ...pathParts] = line.split(/\s+/);
     filesChanged += 1;
     const addedNumber = Number(add);
     const deletedNumber = Number(del);
     if (Number.isFinite(addedNumber)) added += addedNumber;
     if (Number.isFinite(deletedNumber)) deleted += deletedNumber;
+    files.push({
+      path: pathParts.join(" ").slice(0, 500) || "unknown",
+      added: Number.isFinite(addedNumber) ? addedNumber : 0,
+      deleted: Number.isFinite(deletedNumber) ? deletedNumber : 0
+    });
   }
-  return { filesChanged, added, deleted };
+  return { filesChanged, added, deleted, files: files.slice(0, 50) };
 }
 
 function handleCodexJsonLine(context: RunContext, line: string): { handled: boolean; threadId?: string; messageText?: string } {
