@@ -504,7 +504,11 @@ function chatRepoId(chatId: string): string {
   return row?.repo_id ?? "";
 }
 
-function serializeMessage(message: ChatMessageRow) {
+type SerializeAttachmentOptions = {
+  includeData?: boolean;
+};
+
+function serializeMessage(message: ChatMessageRow, options: SerializeAttachmentOptions = {}) {
   const jobAttachments = db.prepare("SELECT * FROM job_attachments WHERE chat_message_id = ? ORDER BY created_at ASC")
     .all(message.id) as AttachmentRow[];
   const chatAttachments = db.prepare("SELECT * FROM chat_attachments WHERE chat_message_id = ? ORDER BY created_at ASC")
@@ -519,32 +523,42 @@ function serializeMessage(message: ChatMessageRow) {
     metadata: message.metadata_json ? JSON.parse(message.metadata_json) : undefined,
     createdAt: message.created_at,
     attachments: [
-      ...jobAttachments.map(serializeAttachment),
-      ...chatAttachments.map(serializeChatAttachment)
+      ...jobAttachments.map((attachment) => serializeAttachment(attachment, options)),
+      ...chatAttachments.map((attachment) => serializeChatAttachment(attachment, options))
     ]
   };
 }
 
-function serializeAttachment(attachment: AttachmentRow) {
+function serializeAttachment(attachment: AttachmentRow, options: SerializeAttachmentOptions = {}) {
   return {
     id: attachment.id,
     name: attachment.name,
     mimeType: attachment.mime_type,
     size: attachment.size,
-    dataBase64: isPreviewableImageMime(attachment.mime_type) ? attachment.data_base64 : undefined,
+    url: `/api/job-attachments/${encodeURIComponent(attachment.id)}`,
+    dataBase64: options.includeData && isPreviewableImageMime(attachment.mime_type) ? attachment.data_base64 : undefined,
     createdAt: attachment.created_at
   };
 }
 
-function serializeChatAttachment(attachment: ChatAttachmentRow) {
+function serializeChatAttachment(attachment: ChatAttachmentRow, options: SerializeAttachmentOptions = {}) {
   return {
     id: attachment.id,
     name: attachment.name,
     mimeType: attachment.mime_type,
     size: attachment.size,
-    dataBase64: isPreviewableImageMime(attachment.mime_type) ? attachment.data_base64 : undefined,
+    url: `/api/chat-attachments/${encodeURIComponent(attachment.id)}`,
+    dataBase64: options.includeData && isPreviewableImageMime(attachment.mime_type) ? attachment.data_base64 : undefined,
     createdAt: attachment.created_at
   };
+}
+
+function sendAttachment(reply: FastifyReply, attachment: Pick<AttachmentRow, "name" | "mime_type" | "data_base64">) {
+  reply.header("Content-Type", attachment.mime_type);
+  reply.header("Cache-Control", "private, max-age=86400");
+  reply.header("X-Content-Type-Options", "nosniff");
+  reply.header("Content-Disposition", `inline; filename="${attachment.name.replace(/["\r\n]/g, "_")}"`);
+  return reply.send(Buffer.from(attachment.data_base64, "base64"));
 }
 
 function isPreviewableImageMime(mimeType: string): boolean {
@@ -1458,7 +1472,37 @@ async function createApp(): Promise<FastifyInstance> {
     if (!chat) return reply.code(404).send({ error: "not_found" });
     const rows = db.prepare("SELECT * FROM jobs WHERE chat_id = ? ORDER BY created_at DESC").all(chatId) as JobRow[];
     const messages = db.prepare("SELECT * FROM chat_messages WHERE chat_id = ? ORDER BY created_at ASC").all(chatId) as ChatMessageRow[];
-    return { chat: serializeChat(chat), jobs: rows.map(serializeJob), messages: messages.map(serializeMessage) };
+    return { chat: serializeChat(chat), jobs: rows.map(serializeJob), messages: messages.map((message) => serializeMessage(message)) };
+  });
+
+  app.get("/api/job-attachments/:id", async (request, reply) => {
+    const auth = requireAuth(db, request, reply);
+    if (!auth) return;
+    const attachmentId = (request.params as { id: string }).id;
+    const row = db.prepare(`
+      SELECT a.*, j.chat_id AS chat_id
+      FROM job_attachments a
+      JOIN jobs j ON j.id = a.job_id
+      WHERE a.id = ?
+    `).get(attachmentId) as (AttachmentRow & { chat_id: string | null }) | undefined;
+    if (!row) return reply.code(404).send({ error: "not_found" });
+    const allowed = row.chat_id ? canAccessChat(auth.user, row.chat_id) : canAccessJob(auth.user, row.job_id);
+    if (!allowed) return reply.code(404).send({ error: "not_found" });
+    return sendAttachment(reply, row);
+  });
+
+  app.get("/api/chat-attachments/:id", async (request, reply) => {
+    const auth = requireAuth(db, request, reply);
+    if (!auth) return;
+    const attachmentId = (request.params as { id: string }).id;
+    const row = db.prepare(`
+      SELECT a.*, m.chat_id AS chat_id
+      FROM chat_attachments a
+      JOIN chat_messages m ON m.id = a.chat_message_id
+      WHERE a.id = ?
+    `).get(attachmentId) as (ChatAttachmentRow & { chat_id: string }) | undefined;
+    if (!row || !canAccessChat(auth.user, row.chat_id)) return reply.code(404).send({ error: "not_found" });
+    return sendAttachment(reply, row);
   });
 
   app.put("/api/chats/:id", async (request, reply) => {

@@ -188,6 +188,7 @@ type MessageAttachment = {
   name: string;
   mimeType: string;
   size: number;
+  url?: string;
   dataBase64?: string;
 };
 
@@ -500,15 +501,20 @@ function attachmentDataUrl(attachment: MessageAttachment) {
   return attachment.dataBase64 && isPreviewableImage(attachment.mimeType) ? `data:${attachment.mimeType};base64,${attachment.dataBase64}` : undefined;
 }
 
+function attachmentPreviewUrl(attachment: MessageAttachment) {
+  if (!isPreviewableImage(attachment.mimeType)) return undefined;
+  return attachmentDataUrl(attachment) ?? attachment.url;
+}
+
 function renderMessageAttachments(attachments: MessageAttachment[] | undefined, onPreview: (preview: ImagePreview) => void) {
   if (!attachments?.length) return null;
   return (
     <div className="message-attachments">
       {attachments.map((attachment, index) => {
-        const previewUrl = attachmentDataUrl(attachment);
+        const previewUrl = attachmentPreviewUrl(attachment);
         const body = (
           <>
-            {previewUrl ? <img alt="" src={previewUrl} /> : <Paperclip size={16} />}
+            {previewUrl ? <img alt="" loading="lazy" src={previewUrl} /> : <Paperclip size={16} />}
             <span>
               <strong>{attachment.name}</strong>
               <small>{attachment.mimeType} · {formatBytes(attachment.size)}</small>
@@ -525,6 +531,19 @@ function renderMessageAttachments(attachments: MessageAttachment[] | undefined, 
             >
               {body}
             </button>
+          );
+        }
+        if (attachment.url) {
+          return (
+            <a
+              className="message-attachment"
+              href={attachment.url}
+              key={attachment.id ?? `${attachment.name}-${index}`}
+              rel="noreferrer"
+              target="_blank"
+            >
+              {body}
+            </a>
           );
         }
         return (
