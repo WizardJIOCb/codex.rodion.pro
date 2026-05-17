@@ -16,6 +16,7 @@ import {
   Link2,
   LogOut,
   Mail,
+  MoreHorizontal,
   MessageSquare,
   Paperclip,
   Play,
@@ -25,7 +26,6 @@ import {
   Settings,
   ShieldCheck,
   Square,
-  Trash2,
   UploadCloud,
   UserCircle,
   Wifi,
@@ -134,6 +134,7 @@ type Chat = {
   source?: string;
   externalId?: string | null;
   cwd?: string | null;
+  hiddenAt?: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -533,6 +534,11 @@ function App() {
   const [sandboxMenuOpen, setSandboxMenuOpen] = useState(false);
   const [originalProjectPath, setOriginalProjectPath] = useState("");
   const [chatTitle, setChatTitle] = useState("");
+  const [chatMenuId, setChatMenuId] = useState("");
+  const [chatProperties, setChatProperties] = useState<Chat | null>(null);
+  const [chatSettingsTitle, setChatSettingsTitle] = useState("");
+  const [linkedChatId, setLinkedChatId] = useState("");
+  const [hiddenLocalChats, setHiddenLocalChats] = useState<Chat[]>([]);
   const [gitMessage, setGitMessage] = useState("Update project");
   const [gitRemoteUrl, setGitRemoteUrl] = useState("");
   const [gitNotice, setGitNotice] = useState("");
@@ -632,6 +638,13 @@ function App() {
     }
   }
 
+  async function loadHiddenLocalChats(repo: Repo) {
+    const response = await api(`/api/chats?agentId=${encodeURIComponent(repo.agentId)}&repoId=${encodeURIComponent(repo.id)}&includeHidden=1&localOnly=1`);
+    if (!response.ok) return;
+    const nextChats = ((await response.json()).chats as Chat[]).filter((chat) => chat.hiddenAt);
+    setHiddenLocalChats(nextChats);
+  }
+
   async function loadChat(chatId: string, preferredJobId?: string) {
     const response = await api(`/api/chats/${chatId}`);
     if (!response.ok) return;
@@ -679,6 +692,8 @@ function App() {
     setActiveJob(null);
     setLogs([]);
     setProjectPanel(null);
+    setChatProperties(null);
+    setChatMenuId("");
     loadChats(repo, true);
   }
 
@@ -692,6 +707,8 @@ function App() {
     setActiveJob(null);
     setLogs([]);
     setProjectPanel(null);
+    setChatProperties(null);
+    setChatMenuId("");
     setGitNotice("");
     setDeployNotice("");
     setNginxNotice("");
@@ -752,6 +769,14 @@ function App() {
     setSandbox(repo.defaultSandbox);
     setProjectPanel("settings");
     setProjectNotice("");
+  }
+
+  function openChatProperties(chat: Chat) {
+    setChatProperties(chat);
+    setChatSettingsTitle(chat.title);
+    setLinkedChatId("");
+    setChatMenuId("");
+    if (selectedRepo) loadHiddenLocalChats(selectedRepo);
   }
 
   useEffect(() => {
@@ -955,23 +980,24 @@ function App() {
     await loadChat(targetChatId, jobId);
   }
 
-  async function deleteChat(chat: Chat) {
+  async function hideChat(chat: Chat) {
     if (!csrf || !selectedRepo) return;
     const activeInChat = activeJob?.chatId === chat.id && ["queued", "assigned", "running"].includes(activeJob.status);
     if (activeInChat) return;
     setBusy(true);
     setChatNotice("");
-    const response = await api(`/api/chats/${chat.id}`, {
-      method: "DELETE",
+    const response = await api(`/api/chats/${chat.id}/hide`, {
+      method: "POST",
       headers: { "x-csrf-token": csrf },
       body: "{}"
     });
     const data = await response.json().catch(() => ({}));
     setBusy(false);
     if (!response.ok) {
-      setChatNotice(data.error === "chat_has_running_job" ? "Stop the running job before deleting this chat." : data.error || "Chat delete failed.");
+      setChatNotice(data.error === "chat_has_running_job" ? "Stop the running job before hiding this chat." : data.error || "Chat hide failed.");
       return;
     }
+    setChatMenuId("");
     const nextChats = chats.filter((item) => item.id !== chat.id);
     setChats(nextChats);
     if (activeChatId === chat.id) {
@@ -983,6 +1009,45 @@ function App() {
       if (nextChats[0]) await loadChat(nextChats[0].id);
     }
     await loadChats(selectedRepo);
+  }
+
+  async function saveChatProperties(event: React.FormEvent) {
+    event.preventDefault();
+    if (!csrf || !selectedRepo || !chatProperties) return;
+    setBusy(true);
+    setChatNotice("");
+    const response = await api(`/api/chats/${chatProperties.id}`, {
+      method: "PUT",
+      headers: { "x-csrf-token": csrf },
+      body: JSON.stringify({
+        title: chatSettingsTitle.trim(),
+        linkedChatId: linkedChatId || undefined
+      })
+    });
+    const data = await response.json().catch(() => ({}));
+    setBusy(false);
+    if (!response.ok) {
+      setChatNotice(data.error || "Chat properties save failed.");
+      return;
+    }
+    setChatProperties(data.chat);
+    await loadChats(selectedRepo);
+    if (linkedChatId || activeChatId === data.chat.id) await loadChat(data.chat.id);
+    setLinkedChatId("");
+  }
+
+  async function restoreHiddenChat(chat: Chat) {
+    if (!csrf || !selectedRepo) return;
+    setBusy(true);
+    const response = await api(`/api/chats/${chat.id}/unhide`, {
+      method: "POST",
+      headers: { "x-csrf-token": csrf },
+      body: "{}"
+    });
+    setBusy(false);
+    if (!response.ok) return;
+    await loadChats(selectedRepo);
+    await loadHiddenLocalChats(selectedRepo);
   }
 
   async function addFiles(files: FileList | File[]) {
@@ -1438,7 +1503,7 @@ function App() {
         )}
         {attachmentNotice && <div className="notice danger">{attachmentNotice}</div>}
         <textarea
-          placeholder={activeChat ? `Напиши следующую задачу в чат "${activeChat.title}"...` : "Напиши первую задачу, чат создастся автоматически..."}
+          placeholder="Опишите задачу, что вы хотите сделать сегодня?"
           value={prompt}
           onChange={(event) => setPrompt(event.target.value)}
           onPaste={handleComposerPaste}
@@ -1565,9 +1630,21 @@ function App() {
                               <span>{chat.title}</span>
                               <small>{new Date(chat.updatedAt).toLocaleString()}</small>
                             </button>
-                            <button className="nav-delete" disabled={busy || (activeJob?.chatId === chat.id && ["queued", "assigned", "running"].includes(activeJob.status))} onClick={() => deleteChat(chat)} title="Delete chat">
-                              <Trash2 size={13} />
+                            <button className="nav-menu-trigger" disabled={busy} onClick={() => setChatMenuId((value) => value === chat.id ? "" : chat.id)} title="Chat menu">
+                              <MoreHorizontal size={15} />
                             </button>
+                            {chatMenuId === chat.id && (
+                              <div className="nav-chat-menu">
+                                <button type="button" onClick={() => openChatProperties(chat)}>Свойства</button>
+                                <button
+                                  type="button"
+                                  disabled={activeJob?.chatId === chat.id && ["queued", "assigned", "running"].includes(activeJob.status)}
+                                  onClick={() => hideChat(chat)}
+                                >
+                                  Скрыть
+                                </button>
+                              </div>
+                            )}
                           </div>
                         ))}
                         {!chats.length && <span className="nav-empty inset">No chats</span>}
@@ -1704,6 +1781,49 @@ function App() {
 
       {view === "projects" && selectedRepo && (
         <section className="project-workspace">
+          {chatProperties && (
+            <form className="project-form chat-properties" onSubmit={saveChatProperties}>
+              <div className="section-head">
+                <h2><MessageSquare size={18} /> Свойства чата</h2>
+                <button className="secondary" type="button" onClick={() => setChatProperties(null)}>Close</button>
+              </div>
+              <label>
+                Название
+                <input value={chatSettingsTitle} onChange={(event) => setChatSettingsTitle(event.target.value)} />
+              </label>
+              <div className="settings-row">
+                <span>Источник</span>
+                <strong>{chatProperties.source || "web"}</strong>
+              </div>
+              {chatProperties.externalId && (
+                <div className="settings-row">
+                  <span>Local chat id</span>
+                  <strong>{chatProperties.externalId}</strong>
+                </div>
+              )}
+              <label>
+                Подключить локальный Codex/VS Code чат
+                <select value={linkedChatId} onChange={(event) => setLinkedChatId(event.target.value)}>
+                  <option value="">Не менять связь</option>
+                  {hiddenLocalChats.map((chat) => (
+                    <option key={chat.id} value={chat.id}>{chat.source}: {chat.title}</option>
+                  ))}
+                </select>
+              </label>
+              <p>Скрытые локальные чаты можно вернуть или подключить к текущему веб-чату. История при скрытии не удаляется.</p>
+              <div className="hidden-chat-list">
+                {hiddenLocalChats.map((chat) => (
+                  <div className="settings-row" key={chat.id}>
+                    <span>{chat.source}: {chat.title}</span>
+                    <button className="secondary" type="button" onClick={() => restoreHiddenChat(chat)}>Вернуть</button>
+                  </div>
+                ))}
+                {!hiddenLocalChats.length && <span className="small-empty">Нет скрытых локальных чатов для этого проекта.</span>}
+              </div>
+              {chatNotice && <div className="notice danger">{chatNotice}</div>}
+              <button disabled={busy || !chatSettingsTitle.trim()} type="submit"><Save size={16} /> Save chat</button>
+            </form>
+          )}
 
           <section className="chat-work">
             <div className="section-head">

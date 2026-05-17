@@ -104,6 +104,7 @@ export type ChatRow = {
   source: string;
   external_id: string | null;
   cwd: string | null;
+  hidden_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -224,6 +225,7 @@ export function openDb(path: string): DatabaseSync {
       source TEXT NOT NULL DEFAULT 'web',
       external_id TEXT,
       cwd TEXT,
+      hidden_at TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -348,6 +350,9 @@ export function openDb(path: string): DatabaseSync {
   }
   if (!chatColumns.some((column) => column.name === "cwd")) {
     db.exec("ALTER TABLE chats ADD COLUMN cwd TEXT");
+  }
+  if (!chatColumns.some((column) => column.name === "hidden_at")) {
+    db.exec("ALTER TABLE chats ADD COLUMN hidden_at TEXT");
   }
   db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_chat_created ON jobs(chat_id, created_at)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_messages_chat_at ON chat_messages(chat_id, created_at)");

@@ -702,6 +702,7 @@ function serializeChat(chat: ChatRow) {
     source: chat.source,
     externalId: chat.external_id,
     cwd: chat.cwd,
+    hiddenAt: chat.hidden_at,
     createdAt: chat.created_at,
     updatedAt: chat.updated_at
   };
@@ -1338,11 +1339,15 @@ async function createApp(): Promise<FastifyInstance> {
   app.get("/api/chats", async (request, reply) => {
     const auth = requireAuth(db, request, reply);
     if (!auth) return;
-    const query = request.query as { agentId?: string; repoId?: string };
+    const query = request.query as { agentId?: string; repoId?: string; includeHidden?: string; localOnly?: string };
     if (!query.agentId || !query.repoId) return reply.code(400).send({ error: "agent_and_repo_required" });
     if (!canAccessRepo(auth.user, query.agentId, query.repoId)) return reply.code(404).send({ error: "repo_not_found" });
-    const rows = db.prepare("SELECT * FROM chats WHERE agent_id = ? AND repo_id = ? ORDER BY updated_at DESC")
-      .all(query.agentId, query.repoId) as ChatRow[];
+    const filters = ["agent_id = ?", "repo_id = ?"];
+    const args = [query.agentId, query.repoId];
+    if (query.includeHidden !== "1") filters.push("hidden_at IS NULL");
+    if (query.localOnly === "1") filters.push("source IN ('codex','vscode')");
+    const rows = db.prepare(`SELECT * FROM chats WHERE ${filters.join(" AND ")} ORDER BY updated_at DESC`)
+      .all(...args) as ChatRow[];
     return { chats: rows.map(serializeChat) };
   });
 
@@ -1382,6 +1387,60 @@ async function createApp(): Promise<FastifyInstance> {
     const rows = db.prepare("SELECT * FROM jobs WHERE chat_id = ? ORDER BY created_at DESC").all(chatId) as JobRow[];
     const messages = db.prepare("SELECT * FROM chat_messages WHERE chat_id = ? ORDER BY created_at ASC").all(chatId) as ChatMessageRow[];
     return { chat: serializeChat(chat), jobs: rows.map(serializeJob), messages: messages.map(serializeMessage) };
+  });
+
+  app.put("/api/chats/:id", async (request, reply) => {
+    const auth = requireAuth(db, request, reply);
+    if (!auth || !requireCsrf(db, request, reply)) return;
+    const chatId = (request.params as { id: string }).id;
+    if (!canAccessChat(auth.user, chatId)) return reply.code(404).send({ error: "not_found" });
+    const body = request.body as { title?: string; linkedChatId?: string };
+    const chat = db.prepare("SELECT * FROM chats WHERE id = ?").get(chatId) as ChatRow | undefined;
+    if (!chat) return reply.code(404).send({ error: "not_found" });
+    const stamp = nowIso();
+    if (body.linkedChatId) {
+      const linked = db.prepare("SELECT * FROM chats WHERE id = ? AND agent_id = ? AND repo_id = ? AND source IN ('codex','vscode')")
+        .get(body.linkedChatId, chat.agent_id, chat.repo_id) as ChatRow | undefined;
+      if (!linked) return reply.code(404).send({ error: "linked_chat_not_found" });
+      db.prepare("UPDATE chats SET title=?, hidden_at=NULL, updated_at=? WHERE id=?")
+        .run(body.title?.trim() || linked.title, stamp, linked.id);
+      if (linked.id !== chatId) {
+        const currentMessages = db.prepare("SELECT id FROM chat_messages WHERE chat_id = ? LIMIT 1").get(chatId) as { id: string } | undefined;
+        if (!currentMessages) db.prepare("UPDATE chats SET hidden_at = COALESCE(hidden_at, ?), updated_at=? WHERE id=?").run(stamp, stamp, chatId);
+      }
+    } else {
+      db.prepare("UPDATE chats SET title=COALESCE(?, title), updated_at=? WHERE id=?")
+        .run(body.title?.trim() || null, stamp, chatId);
+    }
+    const updated = db.prepare("SELECT * FROM chats WHERE id = ?").get(body.linkedChatId || chatId) as ChatRow;
+    broadcast({ type: "chats.updated", agentId: updated.agent_id, repoId: updated.repo_id });
+    return { chat: serializeChat(updated) };
+  });
+
+  app.post("/api/chats/:id/hide", async (request, reply) => {
+    const auth = requireAuth(db, request, reply);
+    if (!auth || !requireCsrf(db, request, reply)) return;
+    const chatId = (request.params as { id: string }).id;
+    if (!canAccessChat(auth.user, chatId)) return reply.code(404).send({ error: "not_found" });
+    const running = db.prepare("SELECT id FROM jobs WHERE chat_id = ? AND status IN ('queued','assigned','running') LIMIT 1").get(chatId) as { id: string } | undefined;
+    if (running) return reply.code(409).send({ error: "chat_has_running_job" });
+    const chat = db.prepare("SELECT * FROM chats WHERE id = ?").get(chatId) as ChatRow | undefined;
+    if (!chat) return reply.code(404).send({ error: "not_found" });
+    db.prepare("UPDATE chats SET hidden_at = COALESCE(hidden_at, ?), updated_at = ? WHERE id = ?").run(nowIso(), nowIso(), chatId);
+    broadcast({ type: "chats.updated", agentId: chat.agent_id, repoId: chat.repo_id });
+    return { ok: true };
+  });
+
+  app.post("/api/chats/:id/unhide", async (request, reply) => {
+    const auth = requireAuth(db, request, reply);
+    if (!auth || !requireCsrf(db, request, reply)) return;
+    const chatId = (request.params as { id: string }).id;
+    if (!canAccessChat(auth.user, chatId)) return reply.code(404).send({ error: "not_found" });
+    const chat = db.prepare("SELECT * FROM chats WHERE id = ?").get(chatId) as ChatRow | undefined;
+    if (!chat) return reply.code(404).send({ error: "not_found" });
+    db.prepare("UPDATE chats SET hidden_at = NULL, updated_at = ? WHERE id = ?").run(nowIso(), chatId);
+    broadcast({ type: "chats.updated", agentId: chat.agent_id, repoId: chat.repo_id });
+    return { chat: serializeChat({ ...chat, hidden_at: null, updated_at: nowIso() }) };
   });
 
   app.delete("/api/chats/:id", async (request, reply) => {
