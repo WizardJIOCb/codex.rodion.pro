@@ -11,6 +11,7 @@ import { makeRedactor } from "./redact.js";
 import { scanRepos } from "./repo-scanner.js";
 
 const LOCAL_CHAT_SYNC_INTERVAL_MS = 15000;
+const LOCAL_ACTIVITY_INTERVAL_MS = 10000;
 const config = loadAgentConfig();
 const redact = makeRedactor(config.redactPatterns);
 const token = process.env[config.tokenEnv];
@@ -602,10 +603,19 @@ function connect() {
     if (ws.readyState !== WebSocket.OPEN) return;
     await syncLocalChats(config, send).catch((error) => console.error(`Local chat sync failed: ${error.message}`));
   }, Math.max(Math.min(config.heartbeatIntervalMs, LOCAL_CHAT_SYNC_INTERVAL_MS), 5000));
+  const activitySync = setInterval(() => {
+    if (ws.readyState !== WebSocket.OPEN) return;
+    send({
+      type: "agent.heartbeat",
+      currentJobId,
+      localActivity: detectLocalCodexActivity(config, currentJobId)
+    });
+  }, LOCAL_ACTIVITY_INTERVAL_MS);
 
   ws.on("close", () => {
     clearInterval(heartbeat);
     clearInterval(chatSync);
+    clearInterval(activitySync);
     console.log("Disconnected. Reconnecting soon...");
     setTimeout(connect, 3000);
   });
