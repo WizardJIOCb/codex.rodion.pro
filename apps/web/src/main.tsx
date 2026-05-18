@@ -2939,7 +2939,10 @@ function App() {
               className="sandbox-trigger"
               title={`Sandbox mode: ${SANDBOX_LABELS[sandbox]}`}
               type="button"
-              onClick={() => setSandboxMenuOpen((value) => !value)}
+              onClick={() => {
+                setActionMenuOpen(false);
+                setSandboxMenuOpen((value) => !value);
+              }}
             >
               <ShieldCheck size={18} />
             </button>
@@ -2971,7 +2974,10 @@ function App() {
               className="action-trigger"
               title="Actions"
               type="button"
-              onClick={() => setActionMenuOpen((value) => !value)}
+              onClick={() => {
+                setSandboxMenuOpen(false);
+                setActionMenuOpen((value) => !value);
+              }}
             >
               <MoreHorizontal size={18} />
             </button>
