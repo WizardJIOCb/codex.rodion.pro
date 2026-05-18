@@ -936,8 +936,42 @@ function buildChatTimeline(messages: ChatMessage[], jobs: Job[], keepLatestTurnE
 
 function mergeJobs(current: Job[], incoming: Job[]) {
   const byId = new Map(current.map((job) => [job.id, job]));
-  incoming.forEach((job) => byId.set(job.id, job));
+  incoming.forEach((job) => {
+    const existing = byId.get(job.id);
+    if (existing && job.gitDiffOmitted && existing.gitDiff && !job.gitDiff) {
+      byId.set(job.id, {
+        ...existing,
+        ...job,
+        gitDiff: existing.gitDiff,
+        gitDiffStat: job.gitDiffStat ?? existing.gitDiffStat,
+        gitDiffOmitted: false
+      });
+      return;
+    }
+    byId.set(job.id, job);
+  });
   return [...byId.values()].sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
+}
+
+function mergeChatMessages(current: ChatMessage[], incoming: ChatMessage[]) {
+  const byId = new Map(current.map((message) => [message.id, message]));
+  return incoming.map((message) => {
+    const existing = byId.get(message.id);
+    if (!existing?.metadata) return message;
+    const incomingMetadata = message.metadata ?? {};
+    if (!incomingMetadata.metadataOmitted && !incomingMetadata.gitDiffOmitted) return message;
+    const metadata = { ...existing.metadata, ...incomingMetadata };
+    if (incomingMetadata.gitDiffOmitted && typeof existing.metadata.gitDiff === "string" && typeof incomingMetadata.gitDiff !== "string") {
+      metadata.gitDiff = existing.metadata.gitDiff;
+      metadata.gitDiffStat = incomingMetadata.gitDiffStat ?? existing.metadata.gitDiffStat;
+      metadata.gitDiffOmitted = false;
+    }
+    if (incomingMetadata.metadataOmitted && Array.isArray(existing.metadata.codexActions) && !Array.isArray(incomingMetadata.codexActions)) {
+      metadata.codexActions = existing.metadata.codexActions;
+      metadata.metadataOmitted = false;
+    }
+    return { ...message, metadata };
+  });
 }
 
 function messageUpdateSignature(message: ChatMessage) {
@@ -1405,9 +1439,9 @@ function App() {
         return [data.chat, ...withoutLoaded].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
       });
       setActiveChatId(chatId);
-      setJobs(data.jobs);
+      setJobs((current) => mergeJobs(current.filter((job) => job.chatId === chatId), data.jobs));
       setAllJobs((current) => mergeJobs(current, data.jobs));
-      setMessages(data.messages ?? []);
+      setMessages((current) => mergeChatMessages(current.filter((message) => message.chatId === chatId), data.messages ?? []));
       const targetJobId = preferredJobId ?? data.jobs[0]?.id;
       if (targetJobId) {
         if (showLoader) setChatLoadingProgress({ phase: "details", loadedBytes, totalBytes, percent: 96, startedAt: loadingStartedAt });
