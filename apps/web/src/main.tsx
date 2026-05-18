@@ -3047,8 +3047,8 @@ function App() {
     const bridgeReady = vscodeNotice && !/failed|agent_offline|timeout|ошибка|не удалось/i.test(vscodeNotice);
     const syncNoticeOk = /прошла|скачал|online/i.test(syncNotice);
     const setupButtonLabel = selectedAgent
-      ? selectedAgent.status === "online" ? "Агент уже online" : "Скачать новый setup-agent.bat"
-      : "Создать агента и скачать setup-agent.bat";
+      ? selectedAgent.status === "online" ? "Агент уже online" : "Скачать установщик агента"
+      : "Создать агента и скачать установщик";
     const statusRows = [
       {
         label: "Web service",
@@ -3094,11 +3094,12 @@ function App() {
             <div>
               <h2><Download size={18} /> Windows agent setup</h2>
               <p>
-                Скачай персональный <code>setup-agent.bat</code>, запусти его на домашнем Windows ПК и дождись статуса online. Репозиторий целиком он не клонирует.
-                Если файл потерян, кнопка выпустит новый токен для offline-агента.
+                Скачай персональный <code>setup-agent.bat</code> и запусти его на домашнем Windows ПК.
+                Он скачает компактный <code>agent-package.zip</code> в папку <code>%USERPROFILE%\codex-agent</code>, запишет конфиг и токен, затем запустит агента.
+                Полный репозиторий не скачивается.
               </p>
             </div>
-            <button disabled={busy || Boolean(selectedAgent && selectedAgent.status === "online")} type="button" onClick={downloadAgentSetup}>
+            <button className="sync-setup-button" disabled={busy || Boolean(selectedAgent && selectedAgent.status === "online")} type="button" onClick={downloadAgentSetup}>
               <Download size={16} /> {setupButtonLabel}
             </button>
           </div>
@@ -3144,10 +3145,10 @@ function App() {
           </div>
 
           <div className="settings-card">
-            <h2><Play size={18} /> After reboot</h2>
+            <h2><Play size={18} /> После перезагрузки</h2>
             <div className="settings-row">
-              <span>Запусти на домашнем ПК</span>
-              <strong>start-agent.bat</strong>
+              <span>Запускай установленный агент</span>
+              <strong>codex-agent\start-agent.bat</strong>
             </div>
             <div className="settings-row">
               <span>Ожидаемый лог агента</span>

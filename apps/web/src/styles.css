@@ -750,12 +750,36 @@ textarea:focus {
 }
 
 .sync-setup-card {
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
 }
 
 .sync-setup-card h2 {
   margin: 0 0 6px;
+}
+
+.sync-setup-card p {
+  max-width: none;
+}
+
+.sync-setup-button {
+  width: fit-content;
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: center;
+  padding: 10px 14px;
+  border-radius: 7px;
+  color: #ffffff;
+  background: var(--accent);
+  font-weight: 800;
+  box-shadow: 0 8px 18px rgba(31, 35, 40, 0.12);
+}
+
+.sync-setup-button:hover:not(:disabled) {
+  background: #111827;
 }
 
 .sync-grid {

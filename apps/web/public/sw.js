@@ -1,4 +1,4 @@
-const CACHE = "cmc-shell-v2";
+const CACHE = "cmc-shell-v3";
 const ASSETS = ["/", "/manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {
