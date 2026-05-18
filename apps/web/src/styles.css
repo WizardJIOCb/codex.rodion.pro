@@ -1677,7 +1677,7 @@ h2 {
   background: #fbfbfa;
 }
 
-.message-action-details div {
+.message-action-details:not(.command-details) div {
   min-width: 0;
   display: flex;
   justify-content: space-between;
@@ -1686,7 +1686,7 @@ h2 {
   font-size: 12px;
 }
 
-.message-action-details span {
+.message-action-details:not(.command-details) span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1752,70 +1752,109 @@ h2 {
 }
 
 .command-details {
-  gap: 6px;
-}
-
-.command-details details {
-  min-width: 0;
   display: grid;
-  gap: 7px;
-  padding: 8px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: #ffffff;
-}
-
-.command-details summary {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
-  align-items: center;
-  cursor: pointer;
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 650;
+  width: min(760px, 100%);
+  max-width: 100%;
 }
 
-.command-details summary small {
-  padding: 2px 7px;
-  border-radius: 999px;
-  color: var(--accent-2);
-  background: rgba(16, 163, 127, 0.1);
-  font-size: 11px;
-  font-weight: 650;
-  text-transform: lowercase;
+.command-card {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
 }
 
-.command-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 4px;
-}
-
-.command-meta span {
+.command-card-toggle {
+  width: fit-content;
+  min-height: auto;
   display: inline-flex;
-  width: auto;
-  padding: 2px 7px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  border: 0;
   color: var(--muted);
-  background: #f8f8f5;
-  font-size: 11px;
-  font-weight: 650;
-  white-space: nowrap;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.25;
 }
 
-.command-details pre {
+.command-card-toggle .open {
+  transform: rotate(180deg);
+}
+
+.command-console {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  padding: 11px 12px;
+  border: 1px solid #333333;
+  border-radius: 8px;
+  background: #171717;
+  color: #d8d8d2;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.command-console-head,
+.command-console-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #a7a7a2;
+  font-size: 12px;
+}
+
+.command-console-head small {
+  color: #8f8f89;
+  font-weight: 700;
+}
+
+.command-console pre {
   max-height: 260px;
   overflow: auto;
-  padding: 8px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: #f8f8f5;
-  font-size: 11.5px;
-  line-height: 1.45;
+  margin: 0;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre;
+}
+
+.command-console code {
+  font: inherit;
+}
+
+.command-prompt {
+  color: #f2f2ed;
+  font-weight: 800;
+}
+
+.command-console-status {
+  justify-content: flex-end;
+}
+
+.command-console-status span::before {
+  content: "✓";
+  margin-right: 5px;
+}
+
+.command-card.failed .command-console {
+  border-color: rgba(248, 113, 113, 0.45);
+}
+
+.command-card.failed .command-console-status span {
+  color: #fca5a5;
+}
+
+.command-card.failed .command-console-status span::before {
+  content: "×";
+}
+
+.command-card.running .command-console-status span::before {
+  content: "";
 }
 
 .rich-text {

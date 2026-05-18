@@ -604,6 +604,19 @@ function parseCommandOutput(output: string) {
   return { exitCode, wallTime, body };
 }
 
+function commandStatusLabel(action: CodexAction, exitCode?: string) {
+  const status = action.status.toLowerCase();
+  if (status.includes("running")) return "Running";
+  if (status.includes("failed") || (exitCode && exitCode !== "0")) return "Failed";
+  if (status.includes("cancel")) return "Cancelled";
+  return "Success";
+}
+
+function commandRunLabel(action: CodexAction, wallTime?: string) {
+  const running = action.status.toLowerCase().includes("running");
+  return `${running ? "Running" : "Ran"} command${wallTime ? ` for ${wallTime}` : ""}`;
+}
+
 function normalizeDisplayText(value: string) {
   return value
     .replace(/\r\n/g, "\n")
@@ -2886,22 +2899,44 @@ function App() {
         </button>
         {expanded && (
           <div className="message-action-details command-details">
-            {actions.map((action) => {
-              const parsed = parseCommandOutput(action.output);
-              return (
-                <details key={action.id}>
-                  <summary>
-                    <span>{action.command}</span>
-                    <small>{action.status}</small>
-                  </summary>
-                  <div className="command-meta">
-                    {parsed.exitCode && <span>Exit {parsed.exitCode}</span>}
-                    {parsed.wallTime && <span>{parsed.wallTime}</span>}
-                  </div>
-                  {parsed.body ? <pre>{parsed.body}</pre> : <small>No output.</small>}
-                </details>
-              );
-            })}
+            {actions.map((action, index) => renderCommandCard(message, action, index))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  function renderCommandCard(message: ChatMessage, action: CodexAction, index: number) {
+    const parsed = parseCommandOutput(action.output);
+    const commandKey = `command:${message.id}:${action.id || index}`;
+    const commandOpen = expandedActions[commandKey] !== false;
+    const status = commandStatusLabel(action, parsed.exitCode);
+    const body = parsed.body || (action.status.toLowerCase().includes("running") ? "Command is still running..." : "");
+    return (
+      <div className={`command-card ${status.toLowerCase()}`} key={action.id || index}>
+        <button
+          className="command-card-toggle"
+          type="button"
+          onClick={() => setExpandedActions((current) => ({ ...current, [commandKey]: current[commandKey] === false }))}
+        >
+          <span>{commandRunLabel(action, parsed.wallTime)}</span>
+          <ChevronDown className={commandOpen ? "open" : ""} size={15} />
+        </button>
+        {commandOpen && (
+          <div className="command-console">
+            <div className="command-console-head">
+              <span>Shell</span>
+              {parsed.exitCode && <small>Exit {parsed.exitCode}</small>}
+            </div>
+            <pre>
+              <code>
+                <span className="command-prompt">$ {action.command}</span>
+                {body && <>{`\n\n${body}`}</>}
+              </code>
+            </pre>
+            <div className="command-console-status">
+              <span>{status}</span>
+            </div>
           </div>
         )}
       </div>
