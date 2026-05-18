@@ -3,12 +3,13 @@ import os from "node:os";
 import { existsSync, unlinkSync } from "node:fs";
 import * as vscode from "vscode";
 
-type BridgeCommand = "ping" | "openSidebar" | "newChat" | "newCodexPanel" | "addToThread" | "addFileToThread";
+type BridgeCommand = "ping" | "openSidebar" | "newChat" | "newCodexPanel" | "addToThread" | "addFileToThread" | "openThread" | "reopenThread";
 
 type BridgeRequest = {
   command?: unknown;
   text?: unknown;
   filePath?: unknown;
+  threadId?: unknown;
 };
 
 type BridgeResponse = {
@@ -23,7 +24,9 @@ const ALLOWED_COMMANDS = new Set<BridgeCommand>([
   "newChat",
   "newCodexPanel",
   "addToThread",
-  "addFileToThread"
+  "addFileToThread",
+  "openThread",
+  "reopenThread"
 ]);
 
 let server: net.Server | undefined;
@@ -43,9 +46,39 @@ function validateRequest(value: unknown): { ok: true; request: Required<Pick<Bri
   }
   if (request.text !== undefined && typeof request.text !== "string") return { ok: false, error: "invalid_text" };
   if (request.filePath !== undefined && typeof request.filePath !== "string") return { ok: false, error: "invalid_file_path" };
+  if (request.threadId !== undefined && typeof request.threadId !== "string") return { ok: false, error: "invalid_thread_id" };
   if (typeof request.text === "string" && request.text.length > 16000) return { ok: false, error: "text_too_large" };
   if (typeof request.filePath === "string" && request.filePath.length > 500) return { ok: false, error: "file_path_too_large" };
+  if (typeof request.threadId === "string" && (request.threadId.length < 1 || request.threadId.length > 300)) return { ok: false, error: "thread_id_too_large" };
   return { ok: true, request: request as Required<Pick<BridgeRequest, "command">> & BridgeRequest };
+}
+
+function codexThreadUri(threadId: string): vscode.Uri {
+  return vscode.Uri.file(`/local/${threadId}`).with({ scheme: "openai-codex", authority: "extension" });
+}
+
+function isCodexThreadTab(tab: vscode.Tab, threadId: string): boolean {
+  const input = tab.input;
+  if (!(input instanceof vscode.TabInputCustom)) return false;
+  return input.viewType === "chatgpt.conversationEditor"
+    && input.uri.scheme === "openai-codex"
+    && input.uri.authority === "extension"
+    && input.uri.path === `/local/${threadId}`;
+}
+
+async function closeCodexThreadTabs(threadId: string): Promise<number> {
+  const tabs = vscode.window.tabGroups.all.flatMap((group) => group.tabs).filter((tab) => isCodexThreadTab(tab, threadId));
+  if (!tabs.length) return 0;
+  await vscode.window.tabGroups.close(tabs, true);
+  return tabs.length;
+}
+
+async function openCodexThread(threadId: string): Promise<void> {
+  await vscode.commands.executeCommand("vscode.openWith", codexThreadUri(threadId), "chatgpt.conversationEditor", {
+    preserveFocus: false,
+    preview: false,
+    viewColumn: vscode.ViewColumn.Active
+  });
 }
 
 async function executeBridgeCommand(request: Required<Pick<BridgeRequest, "command">> & BridgeRequest): Promise<BridgeResponse> {
@@ -68,6 +101,18 @@ async function executeBridgeCommand(request: Required<Pick<BridgeRequest, "comma
       if (typeof request.filePath !== "string" || !request.filePath) return { ok: false, error: "file_path_required" };
       await vscode.commands.executeCommand("chatgpt.addFileToThread", vscode.Uri.file(request.filePath));
       return { ok: true, output: "File add to Codex thread requested." };
+    }
+    case "openThread": {
+      if (typeof request.threadId !== "string" || !request.threadId.trim()) return { ok: false, error: "thread_id_required" };
+      await openCodexThread(request.threadId.trim());
+      return { ok: true, output: "Codex thread opened in VS Code." };
+    }
+    case "reopenThread": {
+      if (typeof request.threadId !== "string" || !request.threadId.trim()) return { ok: false, error: "thread_id_required" };
+      const threadId = request.threadId.trim();
+      const closed = await closeCodexThreadTabs(threadId);
+      await openCodexThread(threadId);
+      return { ok: true, output: closed ? "Codex thread reopened in VS Code." : "Codex thread opened in VS Code." };
     }
     default:
       return { ok: false, error: "unsupported_command" };

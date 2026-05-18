@@ -65,6 +65,8 @@ export const LocalCodexActivitySchema = z.object({
   detectedAt: z.string().datetime(),
   busySinceAt: z.string().datetime().optional(),
   repoId: z.string().min(1).max(80).optional(),
+  chatSource: z.enum(["codex", "vscode"]).optional(),
+  chatExternalId: z.string().min(1).max(300).optional(),
   chatTitle: z.string().max(160).optional(),
   updatedAt: z.string().datetime().optional()
 });
@@ -189,7 +191,9 @@ export const VscodeBridgeCommandSchema = z.enum([
   "newChat",
   "newCodexPanel",
   "addToThread",
-  "addFileToThread"
+  "addFileToThread",
+  "openThread",
+  "reopenThread"
 ]);
 export type VscodeBridgeCommand = z.infer<typeof VscodeBridgeCommandSchema>;
 
@@ -199,6 +203,14 @@ export const AgentVscodeResultSchema = z.object({
   ok: z.boolean(),
   error: z.string().optional(),
   output: z.string().optional()
+});
+
+export const AgentChatSyncResultSchema = z.object({
+  type: z.literal("chat.sync.result"),
+  requestId: z.string().min(1),
+  ok: z.boolean(),
+  sent: z.number().int().nonnegative().optional(),
+  error: z.string().optional()
 });
 
 export const ChatMessageSchema = z.object({
@@ -236,6 +248,7 @@ export const AgentToServerSchema = z.discriminatedUnion("type", [
   AgentNginxResultSchema,
   AgentSslResultSchema,
   AgentVscodeResultSchema,
+  AgentChatSyncResultSchema,
   AgentChatSyncSchema
 ]);
 export type AgentToServer = z.infer<typeof AgentToServerSchema>;
@@ -337,7 +350,13 @@ export const ServerVscodeCommandSchema = z.object({
   requestId: z.string().min(1),
   command: VscodeBridgeCommandSchema,
   text: z.string().max(16000).optional(),
-  filePath: z.string().max(500).optional()
+  filePath: z.string().max(500).optional(),
+  threadId: z.string().min(1).max(300).optional()
+});
+
+export const ServerChatSyncRequestSchema = z.object({
+  type: z.literal("chat.sync.request"),
+  requestId: z.string().min(1)
 });
 
 export const ServerToAgentSchema = z.discriminatedUnion("type", [
@@ -351,6 +370,7 @@ export const ServerToAgentSchema = z.discriminatedUnion("type", [
   ServerNginxSchema,
   ServerSslSchema,
   ServerVscodeCommandSchema,
+  ServerChatSyncRequestSchema,
   z.object({ type: z.literal("repo.scan") })
 ]);
 export type ServerToAgent = z.infer<typeof ServerToAgentSchema>;
@@ -418,7 +438,8 @@ export type Ssl = z.infer<typeof SslSchema>;
 export const VscodeCommandRequestSchema = z.object({
   command: VscodeBridgeCommandSchema,
   text: z.string().max(16000).optional(),
-  filePath: z.string().max(500).optional()
+  filePath: z.string().max(500).optional(),
+  threadId: z.string().min(1).max(300).optional()
 });
 export type VscodeCommandRequest = z.infer<typeof VscodeCommandRequestSchema>;
 
@@ -460,7 +481,14 @@ export const UiEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("agent.status"), agentId: z.string(), status: z.enum(["online", "offline"]) }),
   z.object({ type: z.literal("agent.activity"), agentId: z.string(), localActivity: LocalCodexActivitySchema }),
   z.object({ type: z.literal("repos.updated"), agentId: z.string(), repos: z.array(RepoInfoSchema) }),
-  z.object({ type: z.literal("chats.updated"), agentId: z.string(), repoId: z.string() }),
+  z.object({
+    type: z.literal("chats.updated"),
+    agentId: z.string(),
+    repoId: z.string(),
+    chatId: z.string().optional(),
+    source: z.enum(["codex", "vscode", "web"]).optional(),
+    externalId: z.string().optional()
+  }),
   z.object({ type: z.literal("job.created"), jobId: z.string() }),
   z.object({ type: z.literal("job.updated"), jobId: z.string(), status: JobStatusSchema }),
   AgentJobProgressSchema,

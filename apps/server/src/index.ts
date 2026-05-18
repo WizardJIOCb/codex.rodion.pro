@@ -65,14 +65,16 @@ const db = openDb(config.databasePath);
 
 type AgentConnection = {
   id: string;
+  connectionId: string;
   send: (message: ServerToAgent) => void;
+  close: () => void;
 };
 
 const agents = new Map<string, AgentConnection>();
 type AuthUser = Pick<UserRow, "id" | "role">;
 const uiClients = new Set<{ user: AuthUser; send: (event: UiEvent) => void }>();
 type OAuthProviderId = "google" | "github" | "vk" | "mailru";
-const oauthProviderIds: OAuthProviderId[] = ["google", "github", "vk", "mailru"];
+const oauthProviderIds: OAuthProviderId[] = ["google", "vk"];
 type OAuthProfile = {
   provider: OAuthProviderId;
   providerUserId: string;
@@ -109,6 +111,11 @@ const vscodeRequests = new Map<string, {
   reject: (error: Error) => void;
   timer: NodeJS.Timeout;
 }>();
+const chatSyncRequests = new Map<string, {
+  resolve: (value: Extract<AgentToServer, { type: "chat.sync.result" }>) => void;
+  reject: (error: Error) => void;
+  timer: NodeJS.Timeout;
+}>();
 const STALE_JOB_GRACE_MS = 2 * 60 * 1000;
 
 function isAdmin(user: AuthUser): boolean {
@@ -140,6 +147,7 @@ function isOAuthProvider(value: string): value is OAuthProviderId {
 }
 
 function publicOrigin(request: { protocol: string; hostname: string }): string {
+  if (config.publicBaseUrl) return config.publicBaseUrl.replace(/\/+$/, "");
   return `${request.protocol}://${request.hostname}`;
 }
 
@@ -158,11 +166,19 @@ function oauthRedirectUri(request: { protocol: string; hostname: string }, provi
   return `${publicOrigin(request)}/api/oauth/${provider}/callback`;
 }
 
-function oauthAuthorizeUrl(provider: OAuthProviderId, clientId: string, redirectUri: string, state: string): string {
+function pkceVerifier(): string {
+  return randomToken("pkce").replace(/^pkce_/, "");
+}
+
+function pkceChallenge(verifier: string): string {
+  return createHash("sha256").update(verifier).digest("base64url");
+}
+
+function oauthAuthorizeUrl(provider: OAuthProviderId, clientId: string, redirectUri: string, state: string, codeChallenge?: string): string {
   const urls: Record<OAuthProviderId, string> = {
     google: "https://accounts.google.com/o/oauth2/v2/auth",
     github: "https://github.com/login/oauth/authorize",
-    vk: "https://oauth.vk.com/authorize",
+    vk: "https://id.vk.ru/authorize",
     mailru: "https://oauth.mail.ru/login"
   };
   const url = new URL(urls[provider]);
@@ -176,8 +192,11 @@ function oauthAuthorizeUrl(provider: OAuthProviderId, clientId: string, redirect
   }
   if (provider === "github") url.searchParams.set("scope", "read:user user:email");
   if (provider === "vk") {
-    url.searchParams.set("scope", "email");
-    url.searchParams.set("v", "5.199");
+    url.searchParams.set("scope", "vkid.personal_info email");
+    if (codeChallenge) {
+      url.searchParams.set("code_challenge", codeChallenge);
+      url.searchParams.set("code_challenge_method", "S256");
+    }
   }
   if (provider === "mailru") url.searchParams.set("scope", "userinfo");
   return url.toString();
@@ -304,8 +323,13 @@ function broadcast(event: UiEvent): void {
 function sendAgent(agentId: string, message: ServerToAgent): boolean {
   const agent = agents.get(agentId);
   if (!agent) return false;
-  agent.send(message);
-  return true;
+  try {
+    agent.send(message);
+    return true;
+  } catch {
+    if (agents.get(agentId)?.connectionId === agent.connectionId) agents.delete(agentId);
+    return false;
+  }
 }
 
 function requestAgentProject(
@@ -404,6 +428,22 @@ function requestAgentVscode(
   });
 }
 
+function requestAgentChatSync(
+  agentId: string,
+  message: Extract<ServerToAgent, { type: "chat.sync.request" }>
+): Promise<Extract<AgentToServer, { type: "chat.sync.result" }>> {
+  const agent = agents.get(agentId);
+  if (!agent) return Promise.reject(new Error("agent_offline"));
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      chatSyncRequests.delete(message.requestId);
+      reject(new Error("agent_timeout"));
+    }, 45000);
+    chatSyncRequests.set(message.requestId, { resolve, reject, timer });
+    agent.send(message);
+  });
+}
+
 function markAgentStatus(agentId: string, status: "online" | "offline"): void {
   db.prepare("UPDATE agents SET status = ?, last_seen_at = ? WHERE id = ?").run(status, nowIso(), agentId);
   broadcast({ type: "agent.status", agentId, status });
@@ -476,7 +516,7 @@ function appendChatMessage(message: Omit<ChatMessageRow, "id"> & { id?: string }
     message.metadata_json ?? null,
     message.created_at
   );
-  broadcast({ type: "chats.updated", agentId: chatAgentId(message.chat_id), repoId: chatRepoId(message.chat_id) });
+  broadcast({ type: "chats.updated", agentId: chatAgentId(message.chat_id), repoId: chatRepoId(message.chat_id), chatId: message.chat_id });
 }
 
 function clearOrphanedAgentJobs(agentId: string, currentJobId: string | undefined, reason = "Agent heartbeat has no active job; marking stale job as disconnected."): void {
@@ -511,12 +551,19 @@ function localActivityHasSyncedFinal(agentId: string | undefined, activity: Loca
   if (!agentId || activity.status !== "busy" || activity.source === "codex.rodion.pro" || !activity.repoId || !activity.updatedAt) return false;
   const updatedAt = Date.parse(activity.updatedAt);
   if (!Number.isFinite(updatedAt)) return false;
-  const row = db.prepare(`
-    SELECT MAX(m.created_at) AS latest_assistant_at
-    FROM chat_messages m
-    JOIN chats c ON c.id = m.chat_id
-    WHERE c.agent_id = ? AND c.repo_id = ? AND m.role = 'assistant' AND m.source IN ('codex','vscode')
-  `).get(agentId, activity.repoId) as { latest_assistant_at: string | null } | undefined;
+  const row = activity.chatSource && activity.chatExternalId
+    ? db.prepare(`
+      SELECT MAX(m.created_at) AS latest_assistant_at
+      FROM chat_messages m
+      JOIN chats c ON c.id = m.chat_id
+      WHERE c.agent_id = ? AND c.repo_id = ? AND c.source = ? AND c.external_id = ? AND m.role = 'assistant' AND m.source IN ('codex','vscode')
+    `).get(agentId, activity.repoId, activity.chatSource, activity.chatExternalId) as { latest_assistant_at: string | null } | undefined
+    : db.prepare(`
+      SELECT MAX(m.created_at) AS latest_assistant_at
+      FROM chat_messages m
+      JOIN chats c ON c.id = m.chat_id
+      WHERE c.agent_id = ? AND c.repo_id = ? AND m.role = 'assistant' AND m.source IN ('codex','vscode')
+    `).get(agentId, activity.repoId) as { latest_assistant_at: string | null } | undefined;
   const latestAssistantAt = Date.parse(row?.latest_assistant_at ?? "");
   return Number.isFinite(latestAssistantAt)
     && latestAssistantAt >= updatedAt - 1000
@@ -752,6 +799,7 @@ function upsertSyncedChat(agentId: string, sync: Extract<AgentToServer, { type: 
     : undefined;
   let chat = db.prepare("SELECT * FROM chats WHERE agent_id = ? AND source = ? AND external_id = ?")
     .get(agentId, sync.source, sync.externalId) as ChatRow | undefined;
+  let changed = false;
   const latestSyncedMessage = sync.messages.at(-1);
   if (!linkedChat && chat && chat.updated_at === sync.updatedAt && latestSyncedMessage?.externalId) {
     const latestExists = db.prepare("SELECT 1 FROM chat_messages WHERE chat_id = ? AND source = ? AND external_id = ?")
@@ -761,43 +809,72 @@ function upsertSyncedChat(agentId: string, sync: Extract<AgentToServer, { type: 
   if (linkedChat) {
     if (chat && chat.id !== linkedChat.id) {
       db.prepare("DELETE FROM chats WHERE id = ?").run(chat.id);
+      changed = true;
     }
     chat = linkedChat;
-    db.prepare("UPDATE chats SET cwd=COALESCE(cwd, ?), updated_at=? WHERE id=?")
-      .run(sync.cwd ?? null, sync.updatedAt, chat.id);
+    const nextCwd = chat.cwd ?? sync.cwd ?? null;
+    if (chat.cwd !== nextCwd || chat.updated_at !== sync.updatedAt) {
+      db.prepare("UPDATE chats SET cwd=?, updated_at=? WHERE id=?")
+        .run(nextCwd, sync.updatedAt, chat.id);
+      changed = true;
+    }
   } else if (chat) {
-    db.prepare("UPDATE chats SET repo_id=?, title=?, cwd=?, updated_at=? WHERE id=?")
-      .run(sync.repoId, sync.title, sync.cwd ?? null, sync.updatedAt, chat.id);
+    const nextCwd = sync.cwd ?? null;
+    if (chat.repo_id !== sync.repoId || chat.title !== sync.title || chat.cwd !== nextCwd || chat.updated_at !== sync.updatedAt) {
+      db.prepare("UPDATE chats SET repo_id=?, title=?, cwd=?, updated_at=? WHERE id=?")
+        .run(sync.repoId, sync.title, nextCwd, sync.updatedAt, chat.id);
+      changed = true;
+    }
   } else {
     const chatId = id("chat");
     db.prepare("INSERT INTO chats (id,agent_id,repo_id,title,source,external_id,cwd,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)")
       .run(chatId, agentId, sync.repoId, sync.title, sync.source, sync.externalId, sync.cwd ?? null, sync.updatedAt, sync.updatedAt);
     chat = db.prepare("SELECT * FROM chats WHERE id = ?").get(chatId) as ChatRow;
+    changed = true;
   }
   for (const message of sync.messages) {
+    const content = message.content.slice(0, 200000);
+    const metadataJson = message.metadata ? JSON.stringify(message.metadata) : null;
     const existing = message.externalId
-      ? db.prepare("SELECT id FROM chat_messages WHERE chat_id = ? AND source = ? AND external_id = ?")
-        .get(chat.id, message.source, message.externalId) as { id: string } | undefined
+      ? db.prepare("SELECT * FROM chat_messages WHERE chat_id = ? AND source = ? AND external_id = ?")
+        .get(chat.id, message.source, message.externalId) as ChatMessageRow | undefined
       : undefined;
     if (existing) {
-      db.prepare("UPDATE chat_messages SET role=?, content=?, metadata_json=?, created_at=? WHERE id=?")
-        .run(message.role, message.content.slice(0, 200000), message.metadata ? JSON.stringify(message.metadata) : null, message.createdAt, existing.id);
-      replaceChatMessageAttachments(existing.id, message.attachments, message.createdAt);
+      if (
+        existing.role !== message.role
+        || existing.content !== content
+        || existing.metadata_json !== metadataJson
+        || existing.created_at !== message.createdAt
+      ) {
+        db.prepare("UPDATE chat_messages SET role=?, content=?, metadata_json=?, created_at=? WHERE id=?")
+          .run(message.role, content, metadataJson, message.createdAt, existing.id);
+        replaceChatMessageAttachments(existing.id, message.attachments, message.createdAt);
+        changed = true;
+      }
     } else {
       const duplicate = db.prepare("SELECT id FROM chat_messages WHERE chat_id = ? AND role = ? AND content = ? LIMIT 1")
-        .get(chat.id, message.role, message.content.slice(0, 200000)) as { id: string } | undefined;
+        .get(chat.id, message.role, content) as { id: string } | undefined;
       if (duplicate) {
-        replaceChatMessageAttachments(duplicate.id, message.attachments, message.createdAt);
         continue;
       }
       const messageId = message.id ?? id("msg");
       db.prepare("INSERT INTO chat_messages (id,chat_id,role,content,source,external_id,metadata_json,created_at) VALUES (?,?,?,?,?,?,?,?)")
-        .run(messageId, chat.id, message.role, message.content.slice(0, 200000), message.source, message.externalId ?? null, message.metadata ? JSON.stringify(message.metadata) : null, message.createdAt);
+        .run(messageId, chat.id, message.role, content, message.source, message.externalId ?? null, metadataJson, message.createdAt);
       replaceChatMessageAttachments(messageId, message.attachments, message.createdAt);
+      changed = true;
     }
   }
-  db.prepare("UPDATE chats SET updated_at = ? WHERE id = ?").run(sync.updatedAt || stamp, chat.id);
-  broadcast({ type: "chats.updated", agentId, repoId: sync.repoId });
+  if (changed) {
+    db.prepare("UPDATE chats SET updated_at = ? WHERE id = ?").run(sync.updatedAt || stamp, chat.id);
+    broadcast({
+      type: "chats.updated",
+      agentId,
+      repoId: sync.repoId,
+      chatId: chat.id,
+      source: sync.source,
+      externalId: sync.externalId
+    });
+  }
 }
 
 function tombstoneDeletedChat(chat: ChatRow, jobRows: Array<{ id: string; codex_thread_id?: string | null }>): void {
@@ -971,8 +1048,8 @@ function uniqueAgentId(preferred: string): string {
 }
 
 function agentSetupPayload(request: { protocol: string; hostname: string }, agentId: string, token: string) {
-  const wsProtocol = request.protocol === "https" ? "wss" : "ws";
-  const serverUrl = `${wsProtocol}://${request.hostname}/api/agent/ws`;
+  const origin = publicOrigin(request);
+  const serverUrl = `${origin.replace(/^https:/, "wss:").replace(/^http:/, "ws:")}/api/agent/ws`;
   const configJson = JSON.stringify({
     agentId,
     serverUrl,
@@ -998,7 +1075,9 @@ function agentSetupPayload(request: { protocol: string; hostname: string }, agen
     "if (-not (Get-Command node.exe -ErrorAction SilentlyContinue)) { throw \"Install Node.js LTS first.\" }",
     "if (-not (Get-Command codex.cmd -ErrorAction SilentlyContinue)) { throw \"Install Codex CLI and run: codex login\" }",
     "if (-not (Test-Path $Root)) { git clone https://github.com/WizardJIOCb/codex.rodion.pro.git $Root }",
+    "elseif (-not (Test-Path (Join-Path $Root \".git\"))) { throw \"$Root exists but is not a codex.rodion.pro checkout.\" }",
     "Set-Location $Root",
+    "corepack enable",
     "corepack pnpm install",
     "corepack pnpm build",
     `[Environment]::SetEnvironmentVariable("CMC_AGENT_TOKEN", "${token}", "User")`,
@@ -1006,7 +1085,19 @@ function agentSetupPayload(request: { protocol: string; hostname: string }, agen
     "$config | Set-Content -Path \"apps/agent-windows/agent.config.json\" -Encoding UTF8",
     ".\\start-agent.bat"
   ].join("\n");
-  return { agentId, serverUrl, token, configJson, setupPowerShell };
+  const setupBatch = [
+    "@echo off",
+    "setlocal",
+    "set \"CODEX_AGENT_SETUP_BAT=%~f0\"",
+    "powershell -NoProfile -ExecutionPolicy Bypass -Command \"$ErrorActionPreference='Stop'; $raw=[IO.File]::ReadAllText($env:CODEX_AGENT_SETUP_BAT); $marker='# POWERSHELL-SETUP'; $idx=$raw.IndexOf($marker); if ($idx -lt 0) { throw 'Setup payload not found.' }; $script=$raw.Substring($idx); & ([ScriptBlock]::Create($script))\"",
+    "set \"CODEX_AGENT_SETUP_EXIT=%ERRORLEVEL%\"",
+    "pause",
+    "exit /b %CODEX_AGENT_SETUP_EXIT%",
+    "",
+    "# POWERSHELL-SETUP",
+    setupPowerShell
+  ].join("\r\n");
+  return { agentId, serverUrl, token, configJson, setupPowerShell, setupBatch, setupFileName: "start-agent.bat" };
 }
 
 async function tokenRequest(url: string, params: Record<string, string>, headers: Record<string, string> = {}): Promise<Record<string, unknown>> {
@@ -1037,7 +1128,25 @@ function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
-async function fetchOAuthProfile(provider: OAuthProviderId, code: string, redirectUri: string, client: { clientId: string; clientSecret: string }): Promise<OAuthProfile> {
+function jwtPayload(token: unknown): Record<string, unknown> {
+  const value = stringValue(token);
+  if (!value) return {};
+  const [, payload] = value.split(".");
+  if (!payload) return {};
+  try {
+    return JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+async function fetchOAuthProfile(
+  provider: OAuthProviderId,
+  code: string,
+  redirectUri: string,
+  client: { clientId: string; clientSecret: string },
+  options: { codeVerifier?: string | null; deviceId?: string; state?: string } = {}
+): Promise<OAuthProfile> {
   if (provider === "google") {
     const token = await tokenRequest("https://oauth2.googleapis.com/token", {
       client_id: client.clientId,
@@ -1085,24 +1194,36 @@ async function fetchOAuthProfile(provider: OAuthProviderId, code: string, redire
     return { provider, email: email.toLowerCase(), providerUserId, displayName: stringValue(profile.name) ?? stringValue(profile.login) ?? email };
   }
   if (provider === "vk") {
-    const token = await tokenRequest("https://oauth.vk.com/access_token", {
+    if (!options.codeVerifier) throw new Error("oauth_pkce_missing");
+    const token = await tokenRequest("https://id.vk.ru/oauth2/auth", {
       client_id: client.clientId,
-      client_secret: client.clientSecret,
       code,
-      redirect_uri: redirectUri
+      grant_type: "authorization_code",
+      redirect_uri: redirectUri,
+      code_verifier: options.codeVerifier,
+      ...(options.deviceId ? { device_id: options.deviceId } : {}),
+      ...(options.state ? { state: options.state } : {})
     });
     const accessToken = stringValue(token.access_token);
     const providerUserId = String(token.user_id ?? "");
-    const email = stringValue(token.email);
-    if (!accessToken || !providerUserId || !email) throw new Error("oauth_email_missing");
-    const url = new URL("https://api.vk.com/method/users.get");
-    url.searchParams.set("user_ids", providerUserId);
-    url.searchParams.set("fields", "screen_name");
-    url.searchParams.set("access_token", accessToken);
-    url.searchParams.set("v", "5.199");
-    const data = await jsonGet(url.toString());
-    const first = Array.isArray(data.response) ? data.response[0] as Record<string, unknown> | undefined : undefined;
-    return { provider, email: email.toLowerCase(), providerUserId, displayName: [stringValue(first?.first_name), stringValue(first?.last_name)].filter(Boolean).join(" ") || email };
+    if (!accessToken || !providerUserId) throw new Error("oauth_token_missing");
+    const idToken = jwtPayload(token.id_token);
+    const userInfo = await tokenRequest("https://id.vk.ru/oauth2/user_info", {
+      access_token: accessToken,
+      client_id: client.clientId
+    });
+    const user = typeof userInfo.user === "object" && userInfo.user ? userInfo.user as Record<string, unknown> : userInfo;
+    const email = stringValue(user.email)
+      ?? stringValue(token.email)
+      ?? stringValue(idToken.email)
+      ?? `vk-${providerUserId}@users.noreply.codex.rodion.pro`;
+    const userId = String(user.user_id ?? user.id ?? idToken.sub ?? providerUserId);
+    if (!userId) throw new Error("oauth_profile_missing");
+    const displayName = [stringValue(user.first_name), stringValue(user.last_name)].filter(Boolean).join(" ")
+      || stringValue(user.name)
+      || stringValue(idToken.name)
+      || email;
+    return { provider, email: email.toLowerCase(), providerUserId: userId, displayName };
   }
   const token = await tokenRequest("https://oauth.mail.ru/token", {
     client_id: client.clientId,
@@ -1140,6 +1261,9 @@ async function createUserSession(reply: FastifyReply, userId: string) {
 async function createOrLoginOAuthUser(profile: OAuthProfile, linkUserId?: string): Promise<string> {
   const stamp = nowIso();
   if (linkUserId) {
+    const existing = db.prepare("SELECT user_id FROM oauth_connections WHERE provider = ? AND provider_user_id = ? AND user_id != ?")
+      .get(profile.provider, profile.providerUserId, linkUserId) as { user_id: string } | undefined;
+    if (existing) throw new Error("oauth_account_already_linked");
     db.prepare(`
       INSERT INTO oauth_connections (user_id,provider,provider_user_id,display_name,connected_at)
       VALUES (?,?,?,?,?)
@@ -1188,17 +1312,18 @@ async function createApp(): Promise<FastifyInstance> {
     const client = oauthClient(provider);
     if (!client) return reply.code(501).send({ error: "oauth_provider_not_configured", provider });
     const state = randomToken("oauth_state");
+    const codeVerifier = provider === "vk" ? pkceVerifier() : null;
     const stamp = nowIso();
     db.prepare("DELETE FROM oauth_states WHERE expires_at < ?").run(stamp);
-    db.prepare("INSERT INTO oauth_states (state,provider,user_id,return_to,created_at,expires_at) VALUES (?,?,?,?,?,?)")
-      .run(state, provider, null, safeReturnTo((request.body as { returnTo?: string } | undefined)?.returnTo), stamp, new Date(Date.now() + 10 * 60 * 1000).toISOString());
-    return { url: oauthAuthorizeUrl(provider, client.clientId, oauthRedirectUri(request, provider), state) };
+    db.prepare("INSERT INTO oauth_states (state,provider,user_id,return_to,code_verifier,created_at,expires_at) VALUES (?,?,?,?,?,?,?)")
+      .run(state, provider, null, safeReturnTo((request.body as { returnTo?: string } | undefined)?.returnTo), codeVerifier, stamp, new Date(Date.now() + 10 * 60 * 1000).toISOString());
+    return { url: oauthAuthorizeUrl(provider, client.clientId, oauthRedirectUri(request, provider), state, codeVerifier ? pkceChallenge(codeVerifier) : undefined) };
   });
 
   app.get("/api/oauth/:provider/callback", async (request, reply) => {
     const provider = (request.params as { provider: string }).provider;
     if (!isOAuthProvider(provider)) return reply.code(404).send("Provider not found.");
-    const query = request.query as { code?: string; state?: string; error?: string };
+    const query = request.query as { code?: string; state?: string; error?: string; device_id?: string };
     if (query.error) return reply.redirect(`/?oauth_error=${encodeURIComponent(query.error)}`);
     if (!query.code || !query.state) return reply.code(400).send("Missing OAuth code/state.");
     const row = db.prepare("SELECT * FROM oauth_states WHERE state = ? AND provider = ?").get(query.state, provider) as OAuthStateRow | undefined;
@@ -1207,7 +1332,11 @@ async function createApp(): Promise<FastifyInstance> {
     const client = oauthClient(provider);
     if (!client) return reply.code(501).send("OAuth provider is not configured.");
     try {
-      const profile = await fetchOAuthProfile(provider, query.code, oauthRedirectUri(request, provider), client);
+      const profile = await fetchOAuthProfile(provider, query.code, oauthRedirectUri(request, provider), client, {
+        codeVerifier: row.code_verifier,
+        deviceId: query.device_id,
+        state: query.state
+      });
       const userId = await createOrLoginOAuthUser(profile, row.user_id ?? undefined);
       if (row.user_id) return reply.redirect(safeReturnTo(row.return_to ?? "/profile"));
       await createUserSession(reply, userId);
@@ -1272,11 +1401,12 @@ async function createApp(): Promise<FastifyInstance> {
     const client = oauthClient(provider);
     if (!client) return reply.code(501).send({ error: "oauth_provider_not_configured", provider });
     const state = randomToken("oauth_state");
+    const codeVerifier = provider === "vk" ? pkceVerifier() : null;
     const stamp = nowIso();
     db.prepare("DELETE FROM oauth_states WHERE expires_at < ?").run(stamp);
-    db.prepare("INSERT INTO oauth_states (state,provider,user_id,return_to,created_at,expires_at) VALUES (?,?,?,?,?,?)")
-      .run(state, provider, auth.user.id, "/profile", stamp, new Date(Date.now() + 10 * 60 * 1000).toISOString());
-    return { url: oauthAuthorizeUrl(provider, client.clientId, oauthRedirectUri(request, provider), state) };
+    db.prepare("INSERT INTO oauth_states (state,provider,user_id,return_to,code_verifier,created_at,expires_at) VALUES (?,?,?,?,?,?,?)")
+      .run(state, provider, auth.user.id, "/profile", codeVerifier, stamp, new Date(Date.now() + 10 * 60 * 1000).toISOString());
+    return { url: oauthAuthorizeUrl(provider, client.clientId, oauthRedirectUri(request, provider), state, codeVerifier ? pkceChallenge(codeVerifier) : undefined) };
   });
 
   app.post("/api/login", async (request, reply) => {
@@ -1352,6 +1482,21 @@ async function createApp(): Promise<FastifyInstance> {
       .run(agentId, ownerId, parsed.data.name.trim(), await hashSecret(token), "offline", nowIso());
     const setup = agentSetupPayload({ protocol: request.protocol, hostname: request.hostname }, agentId, token);
     return reply.code(201).send({ agent: { id: agentId, name: parsed.data.name.trim(), userId: ownerId }, setup });
+  });
+
+  app.post("/api/agents/:agentId/setup", async (request, reply) => {
+    const auth = requireAuth(db, request, reply);
+    if (!auth || !requireCsrf(db, request, reply)) return;
+    const agentId = (request.params as { agentId: string }).agentId;
+    if (!canAccessAgent(auth.user, agentId)) return reply.code(404).send({ error: "not_found" });
+    if (agents.has(agentId)) return reply.code(409).send({ error: "agent_online" });
+    const agent = db.prepare("SELECT id FROM agents WHERE id = ?").get(agentId) as { id: string } | undefined;
+    if (!agent) return reply.code(404).send({ error: "not_found" });
+    const token = randomToken("cmc_agent");
+    db.prepare("UPDATE agents SET token_hash = ?, status = 'offline', last_seen_at = ? WHERE id = ?")
+      .run(await hashSecret(token), nowIso(), agentId);
+    const setup = agentSetupPayload({ protocol: request.protocol, hostname: request.hostname }, agentId, token);
+    return { setup };
   });
 
   app.get("/api/agents", async (request, reply) => {
@@ -1584,10 +1729,28 @@ async function createApp(): Promise<FastifyInstance> {
         requestId: id("req"),
         command: parsed.data.command,
         text: parsed.data.text?.trim() || undefined,
-        filePath: parsed.data.filePath?.trim() || undefined
+        filePath: parsed.data.filePath?.trim() || undefined,
+        threadId: parsed.data.threadId?.trim() || undefined
       });
       if (!result.ok) return reply.code(400).send({ error: result.error ?? "vscode_command_failed", output: result.output });
       return { ok: true, output: result.output };
+    } catch (error) {
+      return reply.code(503).send({ error: error instanceof Error ? error.message : "agent_error" });
+    }
+  });
+
+  app.post("/api/agents/:agentId/sync-local-chats", async (request, reply) => {
+    const auth = requireAuth(db, request, reply);
+    if (!auth || !requireCsrf(db, request, reply)) return;
+    const { agentId } = request.params as { agentId: string };
+    if (!canAccessAgent(auth.user, agentId)) return reply.code(404).send({ error: "agent_not_found" });
+    try {
+      const result = await requestAgentChatSync(agentId, {
+        type: "chat.sync.request",
+        requestId: id("req")
+      });
+      if (!result.ok) return reply.code(502).send({ error: result.error ?? "chat_sync_failed" });
+      return { ok: true, sent: result.sent ?? 0 };
     } catch (error) {
       return reply.code(503).send({ error: error instanceof Error ? error.message : "agent_error" });
     }
@@ -1914,10 +2077,21 @@ async function createApp(): Promise<FastifyInstance> {
       socket.close(1008, "invalid token");
       return;
     }
-    agents.set(agent.id, {
+    const connectionId = id("agent_ws");
+    const previous = agents.get(agent.id);
+    if (previous) previous.close();
+    const connection: AgentConnection = {
       id: agent.id,
-      send: (message) => socket.send(JSON.stringify(message))
-    });
+      connectionId,
+      send: (message) => {
+        if (socket.readyState !== socket.OPEN) throw new Error("agent_socket_closed");
+        socket.send(JSON.stringify(message));
+      },
+      close: () => {
+        if (socket.readyState === socket.OPEN || socket.readyState === socket.CONNECTING) socket.close(1000, "replaced");
+      }
+    };
+    agents.set(agent.id, connection);
     markAgentStatus(agent.id, "online");
     dispatchQueue(agent.id);
 
@@ -1925,7 +2099,11 @@ async function createApp(): Promise<FastifyInstance> {
       let parsed: AgentToServer;
       try {
         parsed = AgentToServerSchema.parse(JSON.parse(raw.toString()));
-      } catch {
+      } catch (error) {
+        request.log.warn({
+          error: error instanceof Error ? error.message : String(error),
+          bytes: Buffer.byteLength(raw.toString())
+        }, "Invalid agent websocket message");
         socket.close(1003, "invalid message");
         return;
       }
@@ -2078,9 +2256,18 @@ async function createApp(): Promise<FastifyInstance> {
           pending.resolve(parsed);
         }
       }
+      if (parsed.type === "chat.sync.result") {
+        const pending = chatSyncRequests.get(parsed.requestId);
+        if (pending) {
+          clearTimeout(pending.timer);
+          chatSyncRequests.delete(parsed.requestId);
+          pending.resolve(parsed);
+        }
+      }
     });
 
     socket.on("close", () => {
+      if (agents.get(agent.id)?.connectionId !== connectionId) return;
       agents.delete(agent.id);
       markAgentStatus(agent.id, "offline");
       db.prepare("UPDATE agents SET current_job_id = NULL WHERE id = ?").run(agent.id);

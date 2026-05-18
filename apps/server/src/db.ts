@@ -27,6 +27,7 @@ export type OAuthStateRow = {
   provider: string;
   user_id: string | null;
   return_to: string | null;
+  code_verifier: string | null;
   created_at: string;
   expires_at: string;
 };
@@ -298,6 +299,7 @@ export function openDb(path: string): DatabaseSync {
       provider TEXT NOT NULL,
       user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
       return_to TEXT,
+      code_verifier TEXT,
       created_at TEXT NOT NULL,
       expires_at TEXT NOT NULL
     );
@@ -317,6 +319,7 @@ export function openDb(path: string): DatabaseSync {
     CREATE INDEX IF NOT EXISTS idx_attachments_message ON job_attachments(chat_message_id);
     CREATE INDEX IF NOT EXISTS idx_chat_attachments_message ON chat_attachments(chat_message_id);
     CREATE INDEX IF NOT EXISTS idx_oauth_states_expires ON oauth_states(expires_at);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_oauth_provider_user ON oauth_connections(provider, provider_user_id) WHERE provider_user_id IS NOT NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_external ON chat_messages(chat_id, source, external_id) WHERE external_id IS NOT NULL;
   `);
   const userColumns = db.prepare("PRAGMA table_info(users)").all() as Array<{ name: string }>;
@@ -334,6 +337,10 @@ export function openDb(path: string): DatabaseSync {
   }
   if (!userColumns.some((column) => column.name === "updated_at")) {
     db.exec("ALTER TABLE users ADD COLUMN updated_at TEXT");
+  }
+  const oauthStateColumns = db.prepare("PRAGMA table_info(oauth_states)").all() as Array<{ name: string }>;
+  if (!oauthStateColumns.some((column) => column.name === "code_verifier")) {
+    db.exec("ALTER TABLE oauth_states ADD COLUMN code_verifier TEXT");
   }
   db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_nickname ON users(nickname) WHERE nickname IS NOT NULL AND nickname != ''");
   const firstUser = db.prepare("SELECT id FROM users ORDER BY created_at ASC LIMIT 1").get() as { id: string } | undefined;

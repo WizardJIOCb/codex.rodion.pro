@@ -1,5 +1,5 @@
 import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, readdirSync, statSync } from "node:fs";
-import { join, normalize } from "node:path";
+import { basename, join, normalize } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { LocalCodexActivity } from "@cmc/protocol";
 import type { AgentConfig, RepoConfig } from "./config.js";
@@ -15,6 +15,8 @@ let lastBusyCandidate: Candidate | undefined;
 type Candidate = {
   key: string;
   repoId?: string;
+  chatSource?: "codex" | "vscode";
+  externalId?: string;
   source: string;
   title?: string;
   updatedAt: number;
@@ -49,6 +51,8 @@ export function detectLocalCodexActivity(config: AgentConfig, currentJobId?: str
       detectedAt,
       busySinceAt: new Date(busySinceMs).toISOString(),
       repoId: candidate.repoId,
+      chatSource: candidate.chatSource,
+      chatExternalId: candidate.externalId,
       chatTitle: candidate.title?.slice(0, 160),
       updatedAt: new Date(candidate.updatedAt).toISOString()
     };
@@ -62,6 +66,8 @@ export function detectLocalCodexActivity(config: AgentConfig, currentJobId?: str
       detectedAt,
       busySinceAt: new Date(busySinceMs).toISOString(),
       repoId: lastBusyCandidate.repoId,
+      chatSource: lastBusyCandidate.chatSource,
+      chatExternalId: lastBusyCandidate.externalId,
       chatTitle: lastBusyCandidate.title?.slice(0, 160),
       updatedAt: new Date(lastBusySeenMs).toISOString()
     };
@@ -134,19 +140,21 @@ function recentCodexThreads(config: AgentConfig): Candidate[] {
   const db = new DatabaseSync(statePath, { readOnly: true });
   try {
     const rows = db.prepare(`
-      SELECT title,cwd,updated_at,rollout_path
+      SELECT id,title,cwd,updated_at,rollout_path
       FROM threads
       WHERE archived = 0
       ORDER BY updated_at DESC
       LIMIT 20
-    `).all() as Array<{ title: string; cwd: string; updated_at: number; rollout_path: string }>;
+    `).all() as Array<{ id: string; title: string; cwd: string; updated_at: number; rollout_path: string }>;
     return rows.flatMap((row) => {
       const repo = matchRepo(config.repos, row.cwd);
       if (!repo) return [];
       const startedAt = latestUserMessageMsFromCodexRollout(row.rollout_path);
       return [{
-        key: `local-codex:${repo.id}:${row.title}:${startedAt || row.updated_at}`,
+        key: `local-codex:${repo.id}:${row.id}:${startedAt || row.updated_at}`,
         repoId: repo.id,
+        chatSource: "codex" as const,
+        externalId: row.id,
         source: "local Codex",
         title: row.title,
         updatedAt: timeMsFromNumber(row.updated_at),
@@ -178,8 +186,10 @@ function recentVsCodeSessions(config: AgentConfig): Candidate[] {
       const repo = matchRepo(config.repos, parsed.cwd ?? "");
       if (!repo) return [];
       return [{
-        key: `vscode:${path}`,
+        key: `vscode:${parsed.id}`,
         repoId: repo.id,
+        chatSource: "vscode" as const,
+        externalId: parsed.id,
         source: "VS Code Codex",
         title: parsed.title,
         updatedAt: stat.mtimeMs
@@ -187,7 +197,7 @@ function recentVsCodeSessions(config: AgentConfig): Candidate[] {
     });
 }
 
-function readVsCodeSession(path: string): { title?: string; cwd?: string } {
+function readVsCodeSession(path: string): { id: string; title?: string; cwd?: string } {
   try {
     const raw = readFileSync(path, "utf8");
     const last = raw.trim().split(/\r?\n/).filter(Boolean).at(-1);
@@ -195,12 +205,37 @@ function readVsCodeSession(path: string): { title?: string; cwd?: string } {
     const requests = Array.isArray(root.requests) ? root.requests : [];
     const recent = requests.at(-1) ?? requests[0];
     return {
-      title: typeof recent?.message?.text === "string" ? recent.message.text : undefined,
+      id: typeof root.sessionId === "string" && root.sessionId ? root.sessionId : basename(path).replace(/\.(json|jsonl)$/i, ""),
+      title: vscodeSessionTitle(root, recent),
       cwd: findPathInObject(recent ?? root)
     };
   } catch {
-    return {};
+    return { id: basename(path).replace(/\.(json|jsonl)$/i, "") };
   }
+}
+
+function vscodeSessionTitle(root: any, recent: any): string | undefined {
+  const generatedTitle = findGeneratedTitle(root);
+  if (generatedTitle) return generatedTitle;
+  for (const key of ["title", "name", "label"]) {
+    const value = root?.[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return typeof recent?.message?.text === "string" ? recent.message.text : undefined;
+}
+
+function findGeneratedTitle(value: unknown): string | undefined {
+  const seen = new Set<unknown>();
+  const stack = [value];
+  while (stack.length) {
+    const item: any = stack.pop();
+    if (!item || typeof item !== "object" || seen.has(item)) continue;
+    seen.add(item);
+    if (typeof item.generatedTitle === "string" && item.generatedTitle.trim()) return item.generatedTitle.trim();
+    if (typeof item.title === "string" && item.title.trim() && item.kind === "title") return item.title.trim();
+    for (const child of Object.values(item)) stack.push(child);
+  }
+  return undefined;
 }
 
 function matchRepo(repos: RepoConfig[], cwd: string): RepoConfig | undefined {

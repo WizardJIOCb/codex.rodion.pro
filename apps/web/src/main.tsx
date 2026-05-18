@@ -13,6 +13,7 @@ import {
   ArrowDown,
   ArrowUp,
   Clock3,
+  Download,
   FolderGit2,
   Github,
   GitBranch,
@@ -33,6 +34,7 @@ import {
   Settings,
   ShieldCheck,
   Square,
+  PlugZap,
   Terminal,
   UploadCloud,
   UserCircle,
@@ -69,6 +71,12 @@ const SPEED_OPTIONS: Array<{ value: CodexSpeed; label: string; note: string }> =
   { value: "standard", label: "Standard", note: "Default speed, normal usage" },
   { value: "fast", label: "Fast", note: "Saved with run metadata" }
 ];
+const LOCAL_CHAT_SYNC_REFRESH_DELAYS_MS = [0, 800, 2000, 4000, 8000, 15000];
+type VscodeCommand = "ping" | "openSidebar" | "newChat" | "newCodexPanel" | "addToThread" | "addFileToThread" | "openThread" | "reopenThread";
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
 
 type Agent = {
   id: string;
@@ -79,6 +87,7 @@ type Agent = {
   current_job_id?: string | null;
   codex_version?: string;
   git_version?: string;
+  last_seen_at?: string;
   localActivity?: {
     status: "idle" | "busy";
     summary: string;
@@ -86,6 +95,8 @@ type Agent = {
     detectedAt: string;
     busySinceAt?: string;
     repoId?: string;
+    chatSource?: "codex" | "vscode";
+    chatExternalId?: string;
     chatTitle?: string;
     updatedAt?: string;
   };
@@ -135,6 +146,8 @@ type AgentSetup = {
   token: string;
   configJson: string;
   setupPowerShell: string;
+  setupBatch?: string;
+  setupFileName?: string;
 };
 
 type DeployConfig = {
@@ -246,6 +259,7 @@ type Job = {
   gitDiffStat: string | null;
   gitDiff: string | null;
   gitDiffOmitted?: boolean;
+  codexThreadId?: string | null;
   progress?: JobProgress | null;
   createdAt: string;
   startedAt?: string | null;
@@ -425,6 +439,18 @@ function readFileAttachment(file: File): Promise<PendingAttachment> {
     };
     reader.readAsDataURL(file);
   });
+}
+
+function downloadTextFile(filename: string, content: string, type = "text/plain;charset=utf-8") {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function progressDiffRows(files: JobProgress["files"] | undefined): DiffRow[] {
@@ -627,25 +653,94 @@ function normalizeDisplayText(value: string) {
     .replace(/\\t/g, "  ");
 }
 
-function renderInlineMarkdown(text: string) {
-  const nodes: React.ReactNode[] = [];
-  const pattern = /(`[^`]+`|\[[^\]]+\]\([^)]+\))/g;
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
+function isEscaped(text: string, index: number) {
+  let slashes = 0;
+  for (let cursor = index - 1; cursor >= 0 && text[cursor] === "\\"; cursor--) slashes += 1;
+  return slashes % 2 === 1;
+}
 
-  while ((match = pattern.exec(text))) {
-    if (match.index > lastIndex) nodes.push(text.slice(lastIndex, match.index));
-    const token = match[0];
-    if (token.startsWith("`")) {
-      nodes.push(<code key={nodes.length}>{token.slice(1, -1)}</code>);
-    } else {
-      const link = token.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
-      nodes.push(<code key={nodes.length}>{link ? `${link[1]} ${link[2]}` : token}</code>);
+function findMarkdownToken(text: string, token: string, start: number) {
+  let index = start;
+  while ((index = text.indexOf(token, index)) >= 0) {
+    if (!isEscaped(text, index)) return index;
+    index += token.length;
+  }
+  return -1;
+}
+
+function safeMarkdownHref(value: string) {
+  const href = value.trim();
+  if (/^(https?:|mailto:|tel:)/i.test(href) || href.startsWith("/") || href.startsWith("#")) return href;
+  return "";
+}
+
+function renderInlineMarkdown(text: string, keyPrefix = "inline"): React.ReactNode[] {
+  const nodes: React.ReactNode[] = [];
+  let plain = "";
+  let index = 0;
+
+  const flushPlain = () => {
+    if (!plain) return;
+    nodes.push(plain);
+    plain = "";
+  };
+
+  const pushFormatted = (token: string, element: (children: React.ReactNode[]) => React.ReactNode) => {
+    const close = findMarkdownToken(text, token, index + token.length);
+    if (close <= index + token.length - 1) return false;
+    const body = text.slice(index + token.length, close);
+    flushPlain();
+    nodes.push(element(renderInlineMarkdown(body, `${keyPrefix}:${nodes.length}`)));
+    index = close + token.length;
+    return true;
+  };
+
+  while (index < text.length) {
+    const char = text[index] ?? "";
+    if (char === "\\" && index + 1 < text.length && /[`*_~[\]()\\]/.test(text[index + 1] ?? "")) {
+      plain += text[index + 1];
+      index += 2;
+      continue;
     }
-    lastIndex = match.index + token.length;
+    if (char === "`") {
+      const close = findMarkdownToken(text, "`", index + 1);
+      if (close > index) {
+        flushPlain();
+        nodes.push(<code key={`${keyPrefix}:code:${nodes.length}`}>{text.slice(index + 1, close)}</code>);
+        index = close + 1;
+        continue;
+      }
+    }
+    if (char === "[") {
+      const labelEnd = findMarkdownToken(text, "]", index + 1);
+      const hrefStart = labelEnd >= 0 ? labelEnd + 1 : -1;
+      if (hrefStart >= 0 && text[hrefStart] === "(") {
+        const hrefEnd = findMarkdownToken(text, ")", hrefStart + 1);
+        if (hrefEnd > hrefStart + 1) {
+          const href = safeMarkdownHref(text.slice(hrefStart + 1, hrefEnd));
+          if (href) {
+            flushPlain();
+            nodes.push(
+              <a href={href} key={`${keyPrefix}:link:${nodes.length}`} rel="noreferrer" target={href.startsWith("#") || href.startsWith("/") ? undefined : "_blank"}>
+                {renderInlineMarkdown(text.slice(index + 1, labelEnd), `${keyPrefix}:link:${nodes.length}`)}
+              </a>
+            );
+            index = hrefEnd + 1;
+            continue;
+          }
+        }
+      }
+    }
+    if (text.startsWith("**", index) && pushFormatted("**", (children) => <strong key={`${keyPrefix}:strong:${nodes.length}`}>{children}</strong>)) continue;
+    if (text.startsWith("__", index) && pushFormatted("__", (children) => <strong key={`${keyPrefix}:strong:${nodes.length}`}>{children}</strong>)) continue;
+    if (text.startsWith("~~", index) && pushFormatted("~~", (children) => <del key={`${keyPrefix}:del:${nodes.length}`}>{children}</del>)) continue;
+    if (char === "*" && !text.startsWith("**", index) && pushFormatted("*", (children) => <em key={`${keyPrefix}:em:${nodes.length}`}>{children}</em>)) continue;
+    if (char === "_" && !text.startsWith("__", index) && pushFormatted("_", (children) => <em key={`${keyPrefix}:em:${nodes.length}`}>{children}</em>)) continue;
+    plain += char;
+    index += 1;
   }
 
-  if (lastIndex < text.length) nodes.push(text.slice(lastIndex));
+  flushPlain();
   return nodes;
 }
 
@@ -682,6 +777,19 @@ function renderRichText(value: string, className = "rich-text") {
     if (heading?.[2]) {
       blocks.push(<h3 key={blocks.length}>{renderInlineMarkdown(heading[2])}</h3>);
       index += 1;
+      continue;
+    }
+
+    const quote = line.match(/^>\s?(.*)$/);
+    if (quote) {
+      const quoteLines: string[] = [];
+      while (index < lines.length) {
+        const quoteLine = (lines[index] ?? "").match(/^>\s?(.*)$/);
+        if (!quoteLine) break;
+        quoteLines.push(quoteLine[1] ?? "");
+        index += 1;
+      }
+      blocks.push(<blockquote key={blocks.length}>{renderInlineMarkdown(quoteLines.join(" "))}</blockquote>);
       continue;
     }
 
@@ -1080,6 +1188,7 @@ function App() {
   const [chatLoadingProgress, setChatLoadingProgress] = useState<ChatLoadingProgress | null>(null);
   const [sandbox, setSandbox] = useState<Sandbox>("danger-full-access");
   const [busy, setBusy] = useState(false);
+  const [localChatSyncing, setLocalChatSyncing] = useState(false);
   const [projectPanel, setProjectPanel] = useState<"new" | "settings" | null>(null);
   const [projectName, setProjectName] = useState("");
   const [projectPath, setProjectPath] = useState("");
@@ -1118,7 +1227,9 @@ function App() {
   const [chatNotice, setChatNotice] = useState("");
   const [projectNotice, setProjectNotice] = useState("");
   const [attachmentNotice, setAttachmentNotice] = useState("");
-  const [view, setView] = useState<"projects" | "settings" | "profile">("projects");
+  const [view, setView] = useState<"projects" | "settings" | "profile" | "sync">("projects");
+  const [syncRepoKey, setSyncRepoKey] = useState("");
+  const [syncNotice, setSyncNotice] = useState("");
   const [users, setUsers] = useState<User[]>([]);
   const [profileStatsData, setProfileStatsData] = useState<ProfileStats | null>(null);
   const [oauthProviders, setOauthProviders] = useState<OAuthProvider[]>([]);
@@ -1148,7 +1259,20 @@ function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const selectedRepo = useMemo(() => repos.find((repo) => `${repo.agentId}:${repo.id}` === repoKey), [repoKey, repos]);
+  const syncRepo = useMemo(() => (
+    repos.find((repo) => `${repo.agentId}:${repo.id}` === syncRepoKey)
+    ?? selectedRepo
+    ?? repos[0]
+  ), [repos, selectedRepo, syncRepoKey]);
   const activeChat = useMemo(() => chats.find((chat) => chat.id === activeChatId), [activeChatId, chats]);
+  const activeCodexThreadId = useMemo(() => {
+    if (activeChat?.externalId) return activeChat.externalId;
+    for (let index = jobs.length - 1; index >= 0; index--) {
+      const threadId = jobs[index]?.codexThreadId;
+      if (threadId) return threadId;
+    }
+    return "";
+  }, [activeChat?.externalId, jobs]);
   const chatIsLoading = Boolean(activeChatId && chatLoadingId === activeChatId);
   const chatLoadingPercent = progressPercent(chatLoadingProgress);
   const chatLoadingDeterminate = Boolean(chatLoadingProgress?.totalBytes);
@@ -1185,8 +1309,17 @@ function App() {
     .filter((message) => message.role === "assistant")
     .map((message) => Date.parse(message.createdAt))
     .filter(Number.isFinite));
+  const activeChatMatchesLocalActivity = Boolean(
+    !localActivity?.chatSource
+    || (
+      activeChat
+      && activeChat.source === localActivity.chatSource
+      && activeChat.externalId === localActivity.chatExternalId
+    )
+  );
   const localFinalMessageLikelySeen = Boolean(
     (!localActivity?.repoId || selectedRepo?.id === localActivity.repoId)
+    && activeChatMatchesLocalActivity
     &&
     latestLocalAssistantMessageAt
     && Number.isFinite(localActivityUpdatedAt)
@@ -1230,11 +1363,22 @@ function App() {
   const localBusyRepoKey = localCodexBusy && localActivity?.repoId && selectedAgent?.id
     ? `${selectedAgent.id}:${localActivity.repoId}`
     : "";
-  const localBusyChatTitle = localCodexBusy ? localActivity?.chatTitle : undefined;
-  const localBusyFallbackChatId = localCodexBusy
-    && localBusyRepoKey === `${selectedRepo?.agentId ?? ""}:${selectedRepo?.id ?? ""}`
-    ? activeJob?.chatId ?? activeChatId
-    : "";
+  const localBusyChatTitle = localCodexBusy ? localActivity?.chatTitle?.trim() : undefined;
+  const localBusyChatId = useMemo(() => {
+    if (!localCodexBusy || !localBusyRepoKey || localBusyRepoKey !== `${selectedRepo?.agentId ?? ""}:${selectedRepo?.id ?? ""}`) return "";
+    const chatSource = localActivity?.chatSource;
+    const chatExternalId = localActivity?.chatExternalId;
+    if (chatSource && chatExternalId) {
+      const matchedByExternalId = chats.find((chat) => chat.source === chatSource && chat.externalId === chatExternalId);
+      if (matchedByExternalId) return matchedByExternalId.id;
+    }
+    if (localBusyChatTitle) {
+      const matchedByTitle = chats.find((chat) => chat.title === localBusyChatTitle);
+      if (matchedByTitle) return matchedByTitle.id;
+    }
+    return "";
+  }, [chats, localActivity?.chatExternalId, localActivity?.chatSource, localBusyChatTitle, localBusyRepoKey, localCodexBusy, selectedRepo?.agentId, selectedRepo?.id]);
+  const activeChatLocalBusy = Boolean(localBusyChatId && activeChat?.id === localBusyChatId);
   const busyCountByRepo = useMemo(() => {
     const counts = new Map<string, Set<string>>();
     const addBusy = (repoKeyValue: string, busyKey: string) => {
@@ -1243,9 +1387,9 @@ function App() {
       counts.set(repoKeyValue, current);
     };
     runningJobs.forEach((job) => addBusy(`${job.agentId}:${job.repoId}`, job.chatId ? `chat:${job.chatId}` : `job:${job.id}`));
-    if (localBusyRepoKey) addBusy(localBusyRepoKey, `local:${localActivity?.chatTitle ?? localBusyFallbackChatId ?? "codex"}`);
+    if (localBusyRepoKey) addBusy(localBusyRepoKey, `local:${localActivity?.chatSource ?? "codex"}:${localActivity?.chatExternalId ?? localBusyChatTitle ?? "unknown"}`);
     return new Map([...counts.entries()].map(([key, value]) => [key, value.size]));
-  }, [localBusyFallbackChatId, localBusyRepoKey, localActivity?.chatTitle, runningJobs]);
+  }, [localActivity?.chatExternalId, localActivity?.chatSource, localBusyChatTitle, localBusyRepoKey, runningJobs]);
   const activeChatIdRef = useRef(activeChatId);
   const activeJobIdRef = useRef(activeJob?.id ?? "");
   const selectedRepoRef = useRef<Repo | undefined>(selectedRepo);
@@ -1256,6 +1400,8 @@ function App() {
   const loadChatsAbortRef = useRef<AbortController | null>(null);
   const loadChatAbortRef = useRef<AbortController | null>(null);
   const loadChatInFlightRef = useRef<{ chatId: string; controller: AbortController; foreground: boolean } | null>(null);
+  const localChatSyncRefreshRef = useRef(0);
+  const syncAutoPingRef = useRef("");
   const chatLoadingStartedRef = useRef(0);
   const shellRef = useRef<HTMLElement | null>(null);
   const chatThreadRef = useRef<HTMLElement | null>(null);
@@ -1284,8 +1430,8 @@ function App() {
     at: new Date().toISOString()
   } : null;
   const firstActiveProgressFile = activeProgress?.files?.[0];
-  const timelineItems = useMemo(() => buildChatTimeline(messages, jobs, localCodexBusy || activeRunBusy), [messages, jobs, localCodexBusy, activeRunBusy]);
-  const showChatThinkingIndicator = Boolean(activeChat && !chatIsLoading && (localCodexBusy || activeRunBusy));
+  const timelineItems = useMemo(() => buildChatTimeline(messages, jobs, activeChatLocalBusy || activeRunBusy), [messages, jobs, activeChatLocalBusy, activeRunBusy]);
+  const showChatThinkingIndicator = Boolean(activeChat && !chatIsLoading && (activeChatLocalBusy || activeRunBusy));
 
   function isScrollableElement(element: HTMLElement | null | undefined): element is HTMLElement {
     if (!element || element.scrollHeight <= element.clientHeight + 1) return false;
@@ -1333,10 +1479,12 @@ function App() {
   }
 
   function scrollChatToTop(behavior: ScrollBehavior = "smooth") {
-    const target = firstMessageRef.current ?? chatThreadRef.current ?? shellRef.current;
-    target?.scrollIntoView({ behavior, block: "start" });
+    const scroller = getChatScroller();
+    autoScrollingUntilRef.current = Date.now() + (behavior === "smooth" ? 420 : 80);
+    scroller.scrollTo({ top: 0, behavior });
     chatAtBottomRef.current = false;
     chatStickToBottomRef.current = false;
+    setShowChatScrollTop(false);
     setShowChatScrollBottom(true);
     window.setTimeout(updateChatBottomState, behavior === "smooth" ? 260 : 0);
   }
@@ -1411,11 +1559,10 @@ function App() {
   }
 
   async function loadChats(repo: Repo, selectFirst = false) {
-    loadChatsAbortRef.current?.abort();
     const controller = new AbortController();
     loadChatsAbortRef.current = controller;
     try {
-      const response = await api(`/api/chats?agentId=${encodeURIComponent(repo.agentId)}&repoId=${encodeURIComponent(repo.id)}`, { signal: controller.signal });
+      const response = await api(`/api/chats?agentId=${encodeURIComponent(repo.agentId)}&repoId=${encodeURIComponent(repo.id)}`);
       if (loadChatsAbortRef.current !== controller) return;
       if (!response.ok) {
         loadChatsAbortRef.current = null;
@@ -1450,10 +1597,45 @@ function App() {
     setHiddenLocalChats(nextChats);
   }
 
+  async function refreshChatsAfterLocalSync(repo: Repo, refreshId: number) {
+    for (const pause of LOCAL_CHAT_SYNC_REFRESH_DELAYS_MS) {
+      if (pause) await delay(pause);
+      if (localChatSyncRefreshRef.current !== refreshId) return;
+      await loadChats(repo);
+      await loadHiddenLocalChats(repo);
+      if (activeChatIdRef.current) await loadChat(activeChatIdRef.current).catch(() => undefined);
+    }
+  }
+
+  async function syncLocalChats(repo = selectedRepo) {
+    if (!repo || !csrf || localChatSyncing) return;
+    setLocalChatSyncing(true);
+    setChatNotice("");
+    setSyncNotice("");
+    try {
+      const response = await api(`/api/agents/${encodeURIComponent(repo.agentId)}/sync-local-chats`, {
+        method: "POST",
+        headers: { "x-csrf-token": csrf },
+        body: "{}"
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setChatNotice(data.error === "agent_offline" ? "Агент offline: локальные чаты пока нельзя синхронизировать." : "Не получилось синхронизировать локальные чаты.");
+        setSyncNotice(data.error === "agent_offline" ? "Агент offline: синхронизация недоступна." : data.error || "Не получилось синхронизировать локальные чаты.");
+        return;
+      }
+      setSyncNotice(`Синхронизация прошла: агент отправил ${data.sent ?? 0} чатов.`);
+      const refreshId = localChatSyncRefreshRef.current + 1;
+      localChatSyncRefreshRef.current = refreshId;
+      void refreshChatsAfterLocalSync(repo, refreshId).catch(() => undefined);
+    } finally {
+      setLocalChatSyncing(false);
+    }
+  }
+
   async function loadChat(chatId: string, preferredJobId?: string, showLoader = false) {
     const currentLoad = loadChatInFlightRef.current;
-    if (currentLoad?.chatId === chatId && currentLoad.foreground && !showLoader) return;
-    loadChatAbortRef.current?.abort();
+    if (currentLoad?.chatId === chatId && (!showLoader || currentLoad.foreground)) return;
     const controller = new AbortController();
     loadChatAbortRef.current = controller;
     loadChatInFlightRef.current = { chatId, controller, foreground: showLoader };
@@ -1597,7 +1779,7 @@ function App() {
     if (loadChatsTimerRef.current) window.clearTimeout(loadChatsTimerRef.current);
     loadChatsTimerRef.current = window.setTimeout(() => {
       loadChats(repo).catch(() => undefined);
-    }, 250);
+    }, 180);
   }
 
   function scheduleLoadChat(chatId: string) {
@@ -1606,21 +1788,21 @@ function App() {
     if (loadChatTimerRef.current) window.clearTimeout(loadChatTimerRef.current);
     loadChatTimerRef.current = window.setTimeout(() => {
       loadChat(chatId).catch(() => undefined);
-    }, 250);
+    }, 80);
   }
 
   function scheduleLoadJob(jobId: string) {
     if (loadJobTimerRef.current) window.clearTimeout(loadJobTimerRef.current);
     loadJobTimerRef.current = window.setTimeout(() => {
       loadJob(jobId).catch(() => undefined);
-    }, 250);
+    }, 120);
   }
 
   function scheduleLoadAllJobs() {
     if (loadAllJobsTimerRef.current) window.clearTimeout(loadAllJobsTimerRef.current);
     loadAllJobsTimerRef.current = window.setTimeout(() => {
       loadAllJobs().catch(() => undefined);
-    }, 250);
+    }, 750);
   }
 
   function applyJobStatusUpdate(jobId: string, status: string) {
@@ -1668,6 +1850,7 @@ function App() {
     setChatProperties(null);
     setChatMenuId("");
     loadChats(repo, true);
+    void syncLocalChats(repo);
   }
 
   function clearProjectSelection() {
@@ -1708,6 +1891,17 @@ function App() {
     setChatMenuId("");
     setProfileNotice("");
     loadProfile();
+  }
+
+  function openSyncView() {
+    setMobileMenuOpen(false);
+    setView("sync");
+    setProjectPanel(null);
+    setChatProperties(null);
+    setChatMenuId("");
+    setSyncNotice("");
+    syncAutoPingRef.current = "";
+    refresh();
   }
 
   function openNewProject() {
@@ -1810,6 +2004,10 @@ function App() {
         }
         if (message.type === "job.progress") {
           setProgressByJob((current) => ({ ...current, [message.jobId]: message }));
+          const patchJob = (job: Job): Job => job.id === message.jobId ? { ...job, status: "running", progress: message } : job;
+          setAllJobs((current) => current.map(patchJob));
+          setJobs((current) => current.map(patchJob));
+          setActiveJob((current) => current && current.id === message.jobId ? patchJob(current) : current);
           return;
         }
         if (message.type === "agent.activity") {
@@ -1837,9 +2035,15 @@ function App() {
         }
         if (message.type === "chats.updated") {
           const repo = selectedRepoRef.current;
-          if (repo && message.agentId === repo.agentId && message.repoId === repo.id) scheduleLoadChats(repo);
-          if (activeChatIdRef.current) scheduleLoadChat(activeChatIdRef.current);
-          scheduleLoadAllJobs();
+          const selectedRepoUpdated = Boolean(repo && message.agentId === repo.agentId && message.repoId === repo.id);
+          if (repo && selectedRepoUpdated) scheduleLoadChats(repo);
+          if (
+            selectedRepoUpdated
+            && activeChatIdRef.current
+            && (!message.chatId || message.chatId === activeChatIdRef.current)
+          ) {
+            scheduleLoadChat(activeChatIdRef.current);
+          }
           return;
         }
         if (message.type === "job.created" || message.type === "job.updated") {
@@ -2073,6 +2277,13 @@ function App() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [imagePreview]);
+
+  useEffect(() => {
+    if (view !== "sync" || !csrf || !selectedAgent || selectedAgent.status !== "online" || vscodeBusy) return;
+    if (syncAutoPingRef.current === selectedAgent.id) return;
+    syncAutoPingRef.current = selectedAgent.id;
+    void runVscodeCommand("ping", selectedAgent.id);
+  }, [csrf, selectedAgent?.id, selectedAgent?.status, view, vscodeBusy]);
 
   async function login(event: React.FormEvent) {
     event.preventDefault();
@@ -2352,6 +2563,14 @@ function App() {
     addFiles(files);
   }
 
+  function handleComposerKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key !== "Enter" || !event.ctrlKey || event.repeat || event.nativeEvent.isComposing) return;
+    const canSubmit = Boolean(prompt.trim() || attachments.length);
+    if (busy || !canSubmit || localCodexBusy || activeRunBusy) return;
+    event.preventDefault();
+    event.currentTarget.form?.requestSubmit();
+  }
+
   async function cancelJob() {
     if (!activeJob || !csrf) return;
     await api(`/api/jobs/${activeJob.id}/cancel`, {
@@ -2385,15 +2604,19 @@ function App() {
     await refresh();
   }
 
-  async function runVscodeCommand(command: "ping" | "openSidebar" | "newChat" | "newCodexPanel" | "addToThread") {
-    if (!selectedRepo || !csrf) return;
+  async function runVscodeCommand(
+    command: VscodeCommand,
+    agentId = selectedRepo?.agentId ?? selectedAgent?.id,
+    payload: { text?: string; filePath?: string; threadId?: string } = {}
+  ) {
+    if (!agentId || !csrf) return;
     setVscodeBusy(true);
     setActionMenuOpen(false);
     setVscodeNotice("VS Code bridge command sent...");
-    const response = await api(`/api/agents/${selectedRepo.agentId}/vscode-command`, {
+    const response = await api(`/api/agents/${agentId}/vscode-command`, {
       method: "POST",
       headers: { "x-csrf-token": csrf },
-      body: JSON.stringify({ command })
+      body: JSON.stringify({ command, ...payload })
     });
     const data = await response.json().catch(() => ({}));
     setVscodeBusy(false);
@@ -2515,6 +2738,44 @@ function App() {
     await refresh();
   }
 
+  async function downloadAgentSetup() {
+    if (!csrf || busy) return;
+    setBusy(true);
+    setSyncNotice("");
+    const existingOfflineAgent = selectedAgent && selectedAgent.status !== "online" ? selectedAgent : null;
+    const response = existingOfflineAgent
+      ? await api(`/api/agents/${encodeURIComponent(existingOfflineAgent.id)}/setup`, {
+        method: "POST",
+        headers: { "x-csrf-token": csrf },
+        body: "{}"
+      })
+      : await api("/api/agents", {
+        method: "POST",
+        headers: { "x-csrf-token": csrf },
+        body: JSON.stringify({
+          name: "Home Windows Agent",
+          id: "home-windows"
+        })
+      });
+    setBusy(false);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      setSyncNotice(data.error === "agent_online"
+        ? "Агент уже online: новый start-agent.bat не нужен."
+        : data.error || "Не получилось подготовить start-agent.bat.");
+      return;
+    }
+    const setup = data.setup as AgentSetup | undefined;
+    if (!setup?.setupBatch && !setup?.setupPowerShell) {
+      setSyncNotice("Сервер не вернул setup-файл.");
+      return;
+    }
+    setAgentSetup(setup);
+    downloadTextFile(setup.setupFileName || "start-agent.bat", setup.setupBatch || setup.setupPowerShell, "application/x-bat;charset=utf-8");
+    setSyncNotice("Скачал start-agent.bat. Запусти его на домашнем Windows ПК после установки Git, Node.js LTS и Codex CLI.");
+    await refresh();
+  }
+
   async function saveProfile(event: React.FormEvent) {
     event.preventDefault();
     if (!csrf) return;
@@ -2564,15 +2825,20 @@ function App() {
 
   async function connectOAuth(provider: OAuthProvider["provider"]) {
     if (!csrf) return;
+    setBusy(true);
+    setProfileNotice("");
     const response = await api(`/api/profile/oauth/${provider}/start`, {
       method: "POST",
       headers: { "x-csrf-token": csrf },
       body: "{}"
     });
     const data = await response.json().catch(() => ({}));
+    setBusy(false);
     if (!response.ok) {
       setProfileNotice(data.error === "oauth_provider_not_configured" ? "OAuth для этого провайдера пока не настроен на сервере." : data.error || "OAuth start failed.");
+      return;
     }
+    if (data.url) location.href = data.url;
   }
 
   async function startAuthOAuth(provider: OAuthProvider["provider"]) {
@@ -2613,7 +2879,7 @@ function App() {
   }
 
   function oauthLabel(provider: OAuthProvider["provider"]) {
-    return provider === "mailru" ? "Mail.ru" : provider === "vk" ? "VK.com" : provider === "github" ? "GitHub" : "Google";
+    return provider === "mailru" ? "Mail.ru" : provider === "vk" ? "VK ID" : provider === "github" ? "GitHub" : "Google";
   }
 
   function renderProfile() {
@@ -2719,7 +2985,12 @@ function App() {
           {agentSetup && (
             <div className="settings-card">
               <h2>Windows setup</h2>
-              <p>На ПК пользователя: установи Node.js LTS, Git, Codex CLI, выполни <code>codex login</code>, затем запусти этот PowerShell.</p>
+              <p>На ПК пользователя: установи Node.js LTS, Git, Codex CLI, выполни <code>codex login</code>, затем запусти скачанный <code>start-agent.bat</code>.</p>
+              <button className="secondary" type="button" onClick={() => (
+                downloadTextFile(agentSetup.setupFileName || "start-agent.bat", agentSetup.setupBatch || agentSetup.setupPowerShell, "application/x-bat;charset=utf-8")
+              )}>
+                <Download size={16} /> Download start-agent.bat
+              </button>
               <textarea className="code-textarea" readOnly value={agentSetup.setupPowerShell} />
               <label>
                 Agent config
@@ -2761,6 +3032,127 @@ function App() {
               </div>
             ))}
             {!agents.length && <span className="small-empty">No agents yet.</span>}
+          </div>
+        </section>
+      </section>
+    );
+  }
+
+  function renderSync() {
+    const agentSeenAt = selectedAgent?.last_seen_at ? new Date(selectedAgent.last_seen_at).toLocaleString() : "";
+    const repoKeyValue = syncRepo ? `${syncRepo.agentId}:${syncRepo.id}` : "";
+    const agentReady = Boolean(selectedAgent && selectedAgent.status === "online");
+    const repoReady = Boolean(syncRepo);
+    const codexReady = Boolean(selectedAgent?.codex_version);
+    const bridgeReady = vscodeNotice && !/failed|agent_offline|timeout|ошибка|не удалось/i.test(vscodeNotice);
+    const syncNoticeOk = /прошла|скачал|online/i.test(syncNotice);
+    const setupButtonLabel = selectedAgent
+      ? selectedAgent.status === "online" ? "Агент уже online" : "Скачать новый start-agent.bat"
+      : "Создать агента и скачать start-agent.bat";
+    const statusRows = [
+      {
+        label: "Web service",
+        ok: true,
+        value: "codex.rodion.pro отвечает"
+      },
+      {
+        label: "Windows agent",
+        ok: agentReady,
+        value: selectedAgent ? `${selectedAgent.name} · ${selectedAgent.status}${agentSeenAt ? ` · ${agentSeenAt}` : ""}` : "Агент не найден"
+      },
+      {
+        label: "Codex CLI",
+        ok: codexReady,
+        value: selectedAgent?.codex_version || "Версия ещё не получена от агента"
+      },
+      {
+        label: "Git",
+        ok: Boolean(selectedAgent?.git_version),
+        value: selectedAgent?.git_version || "Версия ещё не получена от агента"
+      },
+      {
+        label: "Project allowlist",
+        ok: repoReady,
+        value: syncRepo ? `${syncRepo.name} · ${syncRepo.pathMasked}` : "Нет доступных проектов"
+      },
+      {
+        label: "VS Code bridge",
+        ok: Boolean(bridgeReady),
+        value: vscodeNotice || "Нажми Ping VS Code"
+      }
+    ];
+
+    return (
+      <section className="settings-work sync-work">
+        <section className="project-form wide">
+          <div className="section-head">
+            <h2><PlugZap size={18} /> Sync</h2>
+            <button className="secondary" type="button" onClick={refresh}><RefreshCw size={16} /> Refresh</button>
+          </div>
+
+          <div className="settings-card sync-setup-card">
+            <div>
+              <h2><Download size={18} /> Windows agent setup</h2>
+              <p>
+                Скачай персональный <code>start-agent.bat</code>, запусти его на домашнем Windows ПК и дождись статуса online.
+                Если файл потерян, кнопка выпустит новый токен для offline-агента.
+              </p>
+            </div>
+            <button disabled={busy || Boolean(selectedAgent && selectedAgent.status === "online")} type="button" onClick={downloadAgentSetup}>
+              <Download size={16} /> {setupButtonLabel}
+            </button>
+          </div>
+
+          <div className="sync-grid">
+            {statusRows.map((row) => (
+              <article className={`sync-status ${row.ok ? "ok" : "bad"}`} key={row.label}>
+                {row.ok ? <CheckCircle2 size={18} /> : <ShieldCheck size={18} />}
+                <span>{row.label}</span>
+                <strong>{row.value}</strong>
+              </article>
+            ))}
+          </div>
+
+          <div className="settings-card">
+            <h2><FolderGit2 size={18} /> Project sync target</h2>
+            <label>
+              Project
+              <select value={repoKeyValue} onChange={(event) => setSyncRepoKey(event.target.value)}>
+                {repos.map((repo) => (
+                  <option key={`${repo.agentId}:${repo.id}`} value={`${repo.agentId}:${repo.id}`}>
+                    {repo.name} · {repo.currentBranch || "no branch"}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="sync-actions">
+              <button disabled={!agentReady || vscodeBusy} type="button" onClick={() => runVscodeCommand("ping", selectedAgent?.id)}>
+                <Terminal size={16} /> Ping VS Code
+              </button>
+              <button disabled={!agentReady || vscodeBusy} type="button" onClick={() => runVscodeCommand("newCodexPanel", selectedAgent?.id)}>
+                <Bot size={16} /> Open Codex panel
+              </button>
+              <button disabled={!agentReady || vscodeBusy || !activeCodexThreadId} type="button" onClick={() => runVscodeCommand("reopenThread", selectedAgent?.id, { threadId: activeCodexThreadId })}>
+                <MessageSquare size={16} /> Reopen active chat
+              </button>
+              <button disabled={!syncRepo || !agentReady || localChatSyncing} type="button" onClick={() => syncRepo && syncLocalChats(syncRepo)}>
+                <RefreshCw className={localChatSyncing ? "spin" : ""} size={16} /> Sync local chats
+              </button>
+            </div>
+            {syncNotice && <div className={syncNoticeOk ? "notice" : "notice danger"}>{syncNotice}</div>}
+            {vscodeNotice && <div className={bridgeReady ? "notice" : "notice danger"}>{vscodeNotice}</div>}
+          </div>
+
+          <div className="settings-card">
+            <h2><Play size={18} /> After reboot</h2>
+            <div className="settings-row">
+              <span>Запусти на домашнем ПК</span>
+              <strong>start-agent.bat</strong>
+            </div>
+            <div className="settings-row">
+              <span>Ожидаемый лог агента</span>
+              <strong>Connected to wss://codex.rodion.pro/api/agent/ws</strong>
+            </div>
           </div>
         </section>
       </section>
@@ -2983,6 +3375,65 @@ function App() {
     );
   }
 
+  function renderActiveRun() {
+    if (!activeJob || !activeRunBusy) return null;
+    return (
+      <>
+        <div className="job-head">
+          <span className={`pill ${activeJob.status}`}><CheckCircle2 size={15} /> {activeJob.status}</span>
+          <strong>{activeJob.prompt}</strong>
+        </div>
+        {activeProgress && (
+          <div className="progress-wrap">
+            <div className="progress-panel">
+              <div>
+                <span className="progress-label">{activeProgress.phase}</span>
+                <strong>{activeProgress.message}</strong>
+              </div>
+              <div className="progress-stats">
+                <span>{activeProgress.filesChanged ?? 0} files</span>
+                <span>+{activeProgress.added ?? 0}</span>
+                <span>-{activeProgress.deleted ?? 0}</span>
+              </div>
+            </div>
+            {activeProgress.files?.length ? (
+              <div className="progress-files">
+                {(activeProgress.files ?? []).slice(0, 8).map((file) => (
+                  <div key={file.path}>
+                    <span>{file.path}</span>
+                    <small className="diff-meta">
+                      <span className="diff-added">+{file.added}</span>
+                      <span className="diff-deleted">-{file.deleted}</span>
+                    </small>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        )}
+        {firstActiveProgressFile ? (
+          <div className="message-actions current-edit">
+            <button type="button" onClick={() => setExpandedActions((current) => ({ ...current, currentProgress: !current.currentProgress }))}>
+              <Wrench size={15} />
+              <span>Editing {firstActiveProgressFile.path} +{firstActiveProgressFile.added} -{firstActiveProgressFile.deleted}</span>
+            </button>
+            {expandedActions.currentProgress && (
+              <div className="message-action-details">
+                {(activeProgress?.files ?? []).slice(0, 8).map((file) => (
+                  <div key={file.path}>
+                    <span>{file.path}</span>
+                    <small>+{file.added} -{file.deleted}</small>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : null}
+        {renderLogs(logs)}
+      </>
+    );
+  }
+
   function renderComposer() {
     if (!selectedRepo) return null;
     const canSubmit = Boolean(prompt.trim() || attachments.length);
@@ -3014,6 +3465,7 @@ function App() {
           placeholder="Опишите задачу, что вы хотите сделать сегодня?"
           value={prompt}
           onChange={(event) => setPrompt(event.target.value)}
+          onKeyDown={handleComposerKeyDown}
           onPaste={handleComposerPaste}
         />
         <div className="sticky-submit">
@@ -3092,6 +3544,14 @@ function App() {
                 <button disabled={vscodeBusy} role="menuitem" type="button" onClick={() => runVscodeCommand("openSidebar")}>
                   <PanelLeftOpen size={16} />
                   <span>Open VS Code Codex</span>
+                </button>
+                <button disabled={vscodeBusy || !activeCodexThreadId} role="menuitem" type="button" onClick={() => runVscodeCommand("openThread", selectedRepo.agentId, { threadId: activeCodexThreadId })}>
+                  <MessageSquare size={16} />
+                  <span>Open current VS Code thread</span>
+                </button>
+                <button disabled={vscodeBusy || !activeCodexThreadId} role="menuitem" type="button" onClick={() => runVscodeCommand("reopenThread", selectedRepo.agentId, { threadId: activeCodexThreadId })}>
+                  <RefreshCw size={16} />
+                  <span>Reopen current thread</span>
                 </button>
                 <button disabled={vscodeBusy} role="menuitem" type="button" onClick={() => runVscodeCommand("newChat")}>
                   <MessageSquare size={16} />
@@ -3190,7 +3650,7 @@ function App() {
           <div className="oauth-login">
             <span>Войти или зарегистрироваться через</span>
             <div>
-              {(authOauthProviders.length ? authOauthProviders : ["google", "github", "vk", "mailru"].map((provider) => ({ provider, connected: false, configured: false } as OAuthProvider))).map((provider) => (
+              {(authOauthProviders.length ? authOauthProviders : ["google", "vk"].map((provider) => ({ provider, connected: false, configured: false } as OAuthProvider))).map((provider) => (
                 <button key={provider.provider} type="button" disabled={busy} onClick={() => startAuthOAuth(provider.provider)} title={provider.configured ? oauthLabel(provider.provider) : `${oauthLabel(provider.provider)} не настроен`}>
                   {oauthIcon(provider.provider)}
                   <span>{oauthLabel(provider.provider)}</span>
@@ -3241,6 +3701,14 @@ function App() {
                       <div className="nav-project-chats">
                         <form className="nav-new-chat" onSubmit={createChat}>
                           <input placeholder="New chat title" value={chatTitle} onChange={(event) => setChatTitle(event.target.value)} />
+                          <button
+                            disabled={localChatSyncing || !online}
+                            onClick={() => syncLocalChats(repo).catch(() => setChatNotice("Не получилось синхронизировать локальные чаты."))}
+                            title="Синхронизировать локальные чаты Codex/VS Code"
+                            type="button"
+                          >
+                            <RefreshCw className={localChatSyncing ? "spin" : ""} size={14} />
+                          </button>
                           <button disabled={busy || !chatTitle.trim()}><Plus size={14} /></button>
                         </form>
                         {chats.map((chat) => (
@@ -3248,7 +3716,7 @@ function App() {
                             {(() => {
                               const chatIsBusy = activeBusyChatIds.has(chat.id)
                                 || (localBusyRepoKey === currentRepoKey && localBusyChatTitle === chat.title)
-                                || (localBusyRepoKey === currentRepoKey && localBusyFallbackChatId === chat.id);
+                                || (localBusyRepoKey === currentRepoKey && localBusyChatId === chat.id);
                               return (
                             <button className="nav-leaf chat-child" onClick={() => {
                               setMobileMenuOpen(false);
@@ -3289,10 +3757,11 @@ function App() {
             </div>
           </div>
           <button className="nav-item"><Activity size={17} /> Runs</button>
-          <button className={view === "profile" ? "nav-item active" : "nav-item"} onClick={openProfileView}><UserCircle size={17} /> Profile</button>
           <button className={view === "settings" ? "nav-item active" : "nav-item"} onClick={openSettingsView}><Settings size={17} /> Settings</button>
+          <button className={view === "sync" ? "nav-item active" : "nav-item"} onClick={openSyncView}><PlugZap size={17} /> Sync</button>
+          <button className={view === "profile" ? "nav-item active" : "nav-item"} onClick={openProfileView}><UserCircle size={17} /> Profile</button>
         </nav>
-        <div className="nav-agent">
+        <div className={`nav-agent ${online ? "online" : "offline"}`}>
           <span>{online ? "Online" : "Offline"}</span>
           <strong>{selectedAgent?.name ?? "Home Windows Agent"}</strong>
           <small>{selectedAgent?.hostname ?? "Waiting for heartbeat"}</small>
@@ -3317,7 +3786,7 @@ function App() {
         </div>
         <div className="top-title">
           <span className={`status ${online ? "ok" : "bad"}`}>{online ? <Wifi size={16} /> : <WifiOff size={16} />} {online ? "Home PC online" : "Home PC offline"}</span>
-          <h1>{view === "settings" ? "Settings" : view === "profile" ? "Profile" : selectedRepo ? selectedRepo.name : "Projects"}</h1>
+          <h1>{view === "settings" ? "Settings" : view === "profile" ? "Profile" : view === "sync" ? "Sync" : selectedRepo ? selectedRepo.name : "Projects"}</h1>
         </div>
         <div className="top-actions">
           {selectedRepo && <button className="icon" onClick={clearProjectSelection} title="Проекты"><ArrowLeft size={18} /></button>}
@@ -3338,6 +3807,7 @@ function App() {
 
       {view === "settings" && renderSettings()}
       {view === "profile" && renderProfile()}
+      {view === "sync" && renderSync()}
 
       {view === "projects" && !selectedRepo && (
         <section className="project-picker">
@@ -3576,65 +4046,11 @@ function App() {
                             <div className="empty">Начни этот чат или дождись синхронизации истории из локального Codex/VS Code.</div>
                           )}
                           {renderChatThinkingIndicator()}
+                          {renderActiveRun()}
                         </>
                       )}
                     </section>
                     {renderComposer()}
-                    {activeJob && activeRunBusy ? (
-                      <>
-                        <div className="job-head">
-                          <span className={`pill ${activeJob.status}`}><CheckCircle2 size={15} /> {activeJob.status}</span>
-                          <strong>{activeJob.prompt}</strong>
-                        </div>
-                        {activeProgress && (
-                          <div className="progress-wrap">
-                            <div className="progress-panel">
-                              <div>
-                                <span className="progress-label">{activeProgress.phase}</span>
-                                <strong>{activeProgress.message}</strong>
-                              </div>
-                              <div className="progress-stats">
-                                <span>{activeProgress.filesChanged ?? 0} files</span>
-                                <span>+{activeProgress.added ?? 0}</span>
-                                <span>-{activeProgress.deleted ?? 0}</span>
-                              </div>
-                            </div>
-                            {activeProgress.files?.length ? (
-                              <div className="progress-files">
-                                {(activeProgress.files ?? []).slice(0, 8).map((file) => (
-                                  <div key={file.path}>
-                                    <span>{file.path}</span>
-                                    <small className="diff-meta">
-                                      <span className="diff-added">+{file.added}</span>
-                                      <span className="diff-deleted">-{file.deleted}</span>
-                                    </small>
-                                  </div>
-                                ))}
-                              </div>
-                            ) : null}
-                          </div>
-                        )}
-                        {firstActiveProgressFile && activeRunBusy ? (
-                          <div className="message-actions current-edit">
-                            <button type="button" onClick={() => setExpandedActions((current) => ({ ...current, currentProgress: !current.currentProgress }))}>
-                              <Wrench size={15} />
-                              <span>Editing {firstActiveProgressFile.path} +{firstActiveProgressFile.added} -{firstActiveProgressFile.deleted}</span>
-                            </button>
-                            {expandedActions.currentProgress && (
-                              <div className="message-action-details">
-                                {(activeProgress.files ?? []).slice(0, 8).map((file) => (
-                                  <div key={file.path}>
-                                    <span>{file.path}</span>
-                                    <small>+{file.added} -{file.deleted}</small>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        ) : null}
-                        {renderLogs(logs)}
-                      </>
-                    ) : null}
                   </section>
                 </section>
               </>

@@ -36,7 +36,8 @@ export function sendVscodeBridgeCommand(command: VscodeCommand): Promise<{ ok: b
       socket.write(JSON.stringify({
         command: command.command,
         text: command.text,
-        filePath: command.filePath
+        filePath: command.filePath,
+        threadId: command.threadId
       }) + "\n");
     });
     socket.on("data", (chunk) => {

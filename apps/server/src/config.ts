@@ -6,6 +6,7 @@ export type ServerConfig = {
   databasePath: string;
   sessionSecret: string;
   cookieDomain?: string;
+  publicBaseUrl?: string;
   publicDir: string;
   nodeEnv: string;
 };
@@ -29,6 +30,7 @@ export function loadConfig(): ServerConfig {
     databasePath,
     sessionSecret: process.env.SESSION_SECRET ?? "dev_secret_change_me_64_chars_minimum_for_local_only",
     cookieDomain: process.env.COOKIE_DOMAIN,
+    publicBaseUrl: process.env.PUBLIC_BASE_URL,
     publicDir: resolve(workspaceRoot(), "apps", "web", "dist"),
     nodeEnv: process.env.NODE_ENV ?? "development"
   };

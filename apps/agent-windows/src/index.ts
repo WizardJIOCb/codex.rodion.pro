@@ -12,8 +12,8 @@ import { scanRepos } from "./repo-scanner.js";
 import { sendVscodeBridgeCommand } from "./vscode-bridge.js";
 
 const LOCAL_CHAT_SYNC_INTERVAL_MS = 15000;
-const LOCAL_ACTIVITY_INTERVAL_MS = 3000;
-const LOCAL_CHAT_SYNC_SETTLE_DELAYS_MS = [1500, 5000, 12000];
+const LOCAL_ACTIVITY_INTERVAL_MS = 1000;
+const LOCAL_CHAT_SYNC_SETTLE_DELAYS_MS = [300, 1200, 3000, 8000];
 const config = loadAgentConfig();
 const redact = makeRedactor(config.redactPatterns);
 const token = process.env[config.tokenEnv];
@@ -24,7 +24,7 @@ let currentJobId: string | undefined;
 let cachedCodexUsage: CodexUsage | undefined;
 let cachedCodexUsageAt = 0;
 let lastLocalActivitySyncKey = "";
-let localChatSyncRunning = false;
+let localChatSyncPromise: Promise<number> | null = null;
 let localChatSyncQueuedReason = "";
 
 async function ensureGitRepo(path: string): Promise<void> {
@@ -420,30 +420,42 @@ function localActivitySyncKey(activity: LocalCodexActivity): string {
   ].join("|");
 }
 
-async function runLocalChatSync(reason: string, send: (message: AgentToServer) => void): Promise<void> {
-  if (localChatSyncRunning) {
+async function runLocalChatSync(reason: string, send: (message: AgentToServer) => void): Promise<number> {
+  if (localChatSyncPromise) {
     localChatSyncQueuedReason = localChatSyncQueuedReason ? `${localChatSyncQueuedReason},${reason}` : reason;
-    return;
+    return localChatSyncPromise;
   }
-  localChatSyncRunning = true;
-  let sent = 0;
-  const startedAt = Date.now();
+  const syncPromise = runLocalChatSyncQueue(reason, send);
+  localChatSyncPromise = syncPromise;
   try {
-    await syncLocalChats(config, (message) => {
-      sent += 1;
-      send(message);
-    });
-    if (reason === "connect" || reason.startsWith("queued:")) {
-      console.log(`Local chat sync completed (${reason}): ${sent} chats in ${Date.now() - startedAt}ms`);
-    }
-  } catch (error) {
-    console.error(`Local chat sync failed (${reason}): ${error instanceof Error ? error.message : String(error)}`);
+    return await syncPromise;
   } finally {
-    localChatSyncRunning = false;
+    if (localChatSyncPromise === syncPromise) localChatSyncPromise = null;
   }
-  const queued = localChatSyncQueuedReason;
-  localChatSyncQueuedReason = "";
-  if (queued) await runLocalChatSync(`queued:${queued}`, send);
+}
+
+async function runLocalChatSyncQueue(reason: string, send: (message: AgentToServer) => void): Promise<number> {
+  let sent = 0;
+  let currentReason = reason;
+  while (currentReason) {
+    const startedAt = Date.now();
+    try {
+      let currentSent = 0;
+      await syncLocalChats(config, (message) => {
+        currentSent += 1;
+        send(message);
+      });
+      sent += currentSent;
+      if (currentReason === "connect" || currentReason.startsWith("queued:")) {
+        console.log(`Local chat sync completed (${currentReason}): ${currentSent} chats in ${Date.now() - startedAt}ms`);
+      }
+    } catch (error) {
+      console.error(`Local chat sync failed (${currentReason}): ${error instanceof Error ? error.message : String(error)}`);
+    }
+    currentReason = localChatSyncQueuedReason ? `queued:${localChatSyncQueuedReason}` : "";
+    localChatSyncQueuedReason = "";
+  }
+  return sent;
 }
 
 function scheduleLocalChatSyncAfterActivity(activity: LocalCodexActivity, send: (message: AgentToServer) => void): void {
@@ -608,6 +620,26 @@ function connect() {
         output: result.output,
         error: result.error
       });
+      return;
+    }
+
+    if (message.type === "chat.sync.request") {
+      try {
+        const sent = await runLocalChatSync("request", send);
+        send({
+          type: "chat.sync.result",
+          requestId: message.requestId,
+          ok: true,
+          sent
+        });
+      } catch (error) {
+        send({
+          type: "chat.sync.result",
+          requestId: message.requestId,
+          ok: false,
+          error: error instanceof Error ? redact(error.message) : redact(String(error))
+        });
+      }
       return;
     }
 

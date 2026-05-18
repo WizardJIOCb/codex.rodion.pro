@@ -57,6 +57,10 @@ pnpm --filter @cmc/server start
 
 For production use the Docker Compose and Caddy files in `infra/`.
 
+## Social Login
+
+Google and VK ID OAuth login are configured with environment variables. See [docs/OAUTH.md](docs/OAUTH.md) for callback URLs and where to get client IDs/secrets.
+
 ## Security Checklist
 
 - Use a long random `SESSION_SECRET`.

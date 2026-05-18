@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { extname, join, normalize } from "node:path";
+import { dirname, extname, join, normalize } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { AgentToServer, ChatMessage } from "@cmc/protocol";
 import type { AgentConfig, RepoConfig } from "./config.js";
@@ -64,7 +64,7 @@ function readCodexChats(config: AgentConfig): LocalChat[] {
   const db = new DatabaseSync(statePath, { readOnly: true });
   try {
     const rows = db.prepare(`
-      SELECT id,title,cwd,rollout_path,updated_at,created_at,first_user_message
+      SELECT *
       FROM threads
       WHERE archived = 0
       ORDER BY updated_at DESC
@@ -76,6 +76,8 @@ function readCodexChats(config: AgentConfig): LocalChat[] {
       rollout_path: string;
       updated_at: number;
       created_at: number;
+      updated_at_ms?: number | null;
+      created_at_ms?: number | null;
       first_user_message: string;
     }>;
     return rows.flatMap((row) => {
@@ -88,7 +90,7 @@ function readCodexChats(config: AgentConfig): LocalChat[] {
           content: row.first_user_message,
           source: "codex",
           externalId: `${row.id}:first`,
-          createdAt: timeFromNumber(row.created_at)
+          createdAt: timeFromNumber(row.created_at_ms ?? row.created_at)
         });
       }
       return [{
@@ -97,7 +99,7 @@ function readCodexChats(config: AgentConfig): LocalChat[] {
         externalId: row.id,
         title: row.title || row.first_user_message || "Codex chat",
         cwd: cleanPath(row.cwd),
-        updatedAt: timeFromNumber(row.updated_at),
+        updatedAt: timeFromNumber(row.updated_at_ms ?? row.updated_at),
         messages
       }];
     });
@@ -294,18 +296,32 @@ function readVsCodeChats(config: AgentConfig): LocalChat[] {
   return files.flatMap((file) => {
     const parsed = readVsCodeFile(file);
     if (!parsed) return [];
-    const repo = matchRepo(config.repos, parsed.cwd ?? "");
+    const cwd = parsed.cwd ?? readVsCodeWorkspaceCwd(file);
+    const repo = matchRepo(config.repos, cwd ?? "");
     if (!repo) return [];
     return [{
       repoId: repo.id,
       source: "vscode" as const,
       externalId: parsed.id,
       title: parsed.title,
-      cwd: parsed.cwd,
+      cwd,
       updatedAt: parsed.updatedAt,
       messages: parsed.messages
     }];
   });
+}
+
+function readVsCodeWorkspaceCwd(chatFile: string): string | undefined {
+  const workspacePath = join(dirname(dirname(chatFile)), "workspace.json");
+  if (!existsSync(workspacePath)) return undefined;
+  try {
+    const workspace = JSON.parse(readFileSync(workspacePath, "utf8")) as { folder?: unknown; workspace?: unknown };
+    if (typeof workspace.folder === "string") return fileUriToPath(workspace.folder) ?? cleanPath(workspace.folder);
+    if (typeof workspace.workspace === "string") return fileUriToPath(workspace.workspace) ?? cleanPath(workspace.workspace);
+    return findPathInObject(workspace);
+  } catch {
+    return undefined;
+  }
 }
 
 function readVsCodeFile(path: string): { id: string; title: string; cwd?: string; updatedAt: string; messages: ChatMessage[] } | null {
@@ -353,11 +369,35 @@ function readVsCodeFile(path: string): { id: string; title: string; cwd?: string
   if (!messages.length) return null;
   return {
     id: sessionId,
-    title: messages[0]?.content.slice(0, 120) || "VS Code chat",
+    title: vscodeSessionTitle(root, messages),
     cwd,
     updatedAt: timeFromNumber(root.lastMessageDate ?? root.creationDate ?? statSync(path).mtimeMs),
     messages: compactMessages(messages)
   };
+}
+
+function vscodeSessionTitle(root: any, messages: ChatMessage[]): string {
+  const generatedTitle = findGeneratedTitle(root);
+  if (generatedTitle) return generatedTitle.slice(0, 300);
+  for (const key of ["title", "name", "label"]) {
+    const value = root?.[key];
+    if (typeof value === "string" && value.trim()) return value.trim().slice(0, 300);
+  }
+  return messages[0]?.content.slice(0, 120) || "VS Code chat";
+}
+
+function findGeneratedTitle(value: unknown): string | undefined {
+  const seen = new Set<unknown>();
+  const stack = [value];
+  while (stack.length) {
+    const item: any = stack.pop();
+    if (!item || typeof item !== "object" || seen.has(item)) continue;
+    seen.add(item);
+    if (typeof item.generatedTitle === "string" && item.generatedTitle.trim()) return item.generatedTitle.trim();
+    if (typeof item.title === "string" && item.title.trim() && item.kind === "title") return item.title.trim();
+    for (const child of Object.values(item)) stack.push(child);
+  }
+  return undefined;
 }
 
 function matchRepo(repos: RepoConfig[], cwd: string): RepoConfig | undefined {
@@ -539,6 +579,11 @@ function findPathInObject(value: unknown): string | undefined {
   const stack = [value];
   while (stack.length) {
     const item: any = stack.pop();
+    if (typeof item === "string") {
+      const path = fileUriToPath(item);
+      if (path) return path;
+      continue;
+    }
     if (!item || typeof item !== "object" || seen.has(item)) continue;
     seen.add(item);
     if (typeof item.fsPath === "string") return cleanPath(item.fsPath);
@@ -546,6 +591,15 @@ function findPathInObject(value: unknown): string | undefined {
     for (const child of Object.values(item)) stack.push(child);
   }
   return undefined;
+}
+
+function fileUriToPath(value: string): string | undefined {
+  if (!value.toLowerCase().startsWith("file://")) return undefined;
+  const withoutScheme = value.replace(/^file:\/\//i, "");
+  const decoded = safeDecodeURIComponent(withoutScheme).replace(/\//g, "\\");
+  const path = decoded.replace(/^\\([A-Za-z]:\\)/, "$1");
+  if (!/^[A-Za-z]:\\|^\\\\/.test(path)) return undefined;
+  return cleanPath(path);
 }
 
 function collectFiles(root: string, predicate: (path: string) => boolean): string[] {

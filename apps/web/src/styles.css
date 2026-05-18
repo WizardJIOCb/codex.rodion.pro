@@ -480,7 +480,7 @@ textarea:focus {
 
 .nav-new-chat {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 32px;
+  grid-template-columns: minmax(0, 1fr) 32px 32px;
   gap: 5px;
   min-width: 0;
 }
@@ -509,9 +509,13 @@ textarea:focus {
   background: #f8f8f5;
 }
 
-.nav-agent span,
+.nav-agent.online span,
 .status.ok {
   color: var(--accent-2);
+}
+
+.nav-agent.offline span {
+  color: var(--danger);
 }
 
 .nav-agent small,
@@ -739,6 +743,64 @@ textarea:focus {
   margin: 0;
   color: var(--muted);
   line-height: 1.45;
+}
+
+.sync-work {
+  max-width: 980px;
+}
+
+.sync-setup-card {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.sync-setup-card h2 {
+  margin: 0 0 6px;
+}
+
+.sync-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.sync-status {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 5px 8px;
+  align-items: center;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.sync-status.ok svg {
+  color: #007a5a;
+}
+
+.sync-status.bad svg {
+  color: #9a6700;
+}
+
+.sync-status span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.sync-status strong {
+  grid-column: 1 / -1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.sync-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .settings-row {
@@ -1873,6 +1935,7 @@ h2 {
 .rich-text h3,
 .rich-text ul,
 .rich-text ol,
+.rich-text blockquote,
 .rich-text pre {
   margin: 0;
 }
@@ -1891,6 +1954,34 @@ h2 {
 
 .rich-text li {
   padding-left: 2px;
+}
+
+.rich-text strong {
+  font-weight: 750;
+  color: #111827;
+}
+
+.rich-text em {
+  font-style: italic;
+}
+
+.rich-text del {
+  color: var(--muted);
+}
+
+.rich-text a {
+  color: #0f766e;
+  font-weight: 650;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+.rich-text blockquote {
+  padding: 8px 10px;
+  border-left: 3px solid #0f766e;
+  background: #f4f7f3;
+  color: #374151;
 }
 
 .rich-text code {
@@ -2735,6 +2826,9 @@ button:disabled {
   .workspace,
   .project-workspace,
   .profile-grid,
+  .sync-setup-card,
+  .sync-grid,
+  .sync-actions,
   .oauth-row {
     grid-template-columns: 1fr;
   }
