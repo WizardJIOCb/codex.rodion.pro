@@ -902,6 +902,10 @@ textarea:focus {
   min-width: 0;
 }
 
+.job-detail {
+  padding-bottom: var(--composer-space, 150px);
+}
+
 .chat.active,
 .job.active {
   border-color: #9ca3af;
@@ -938,6 +942,11 @@ textarea:focus {
 }
 
 .composer {
+  position: fixed;
+  left: var(--composer-left, 340px);
+  bottom: max(10px, env(safe-area-inset-bottom));
+  z-index: 25;
+  width: var(--composer-width, calc(100vw - 650px));
   padding: 12px;
   overflow: visible;
 }
@@ -1004,8 +1013,6 @@ textarea:focus {
 }
 
 .sticky-submit {
-  position: sticky;
-  bottom: max(8px, env(safe-area-inset-bottom));
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto auto auto;
   gap: 6px;
@@ -1428,7 +1435,7 @@ h2 {
 .chat-scroll-controls {
   position: fixed;
   right: calc(300px + 32px);
-  bottom: calc(104px + env(safe-area-inset-bottom));
+  bottom: calc(var(--composer-space, 150px) + env(safe-area-inset-bottom));
   z-index: 80;
   display: grid;
   gap: 7px;
@@ -2567,7 +2574,7 @@ button:disabled {
 
   .chat-scroll-controls {
     right: max(12px, env(safe-area-inset-right));
-    bottom: calc(72px + env(safe-area-inset-bottom));
+    bottom: calc(var(--composer-space, 150px) + env(safe-area-inset-bottom));
     gap: 6px;
   }
 

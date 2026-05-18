@@ -1218,6 +1218,7 @@ function App() {
   const loadChatAbortRef = useRef<AbortController | null>(null);
   const shellRef = useRef<HTMLElement | null>(null);
   const chatThreadRef = useRef<HTMLElement | null>(null);
+  const composerRef = useRef<HTMLFormElement | null>(null);
   const firstMessageRef = useRef<HTMLElement | null>(null);
   const lastMessageRef = useRef<HTMLElement | null>(null);
   const currentScrollChatRef = useRef("");
@@ -1288,6 +1289,17 @@ function App() {
     chatAtBottomRef.current = false;
     setShowChatScrollBottom(true);
     window.setTimeout(updateChatBottomState, behavior === "smooth" ? 260 : 0);
+  }
+
+  function updateComposerPlacement() {
+    const shell = shellRef.current;
+    const composer = composerRef.current;
+    if (!shell || !composer) return;
+    const rect = shell.getBoundingClientRect();
+    const height = Math.ceil(composer.getBoundingClientRect().height);
+    document.documentElement.style.setProperty("--composer-left", `${Math.max(0, rect.left)}px`);
+    document.documentElement.style.setProperty("--composer-width", `${Math.max(0, rect.width)}px`);
+    document.documentElement.style.setProperty("--composer-space", `${height + 24}px`);
   }
 
   async function refresh() {
@@ -1820,10 +1832,16 @@ function App() {
     if (!activeChat) {
       setShowChatScrollTop(false);
       setShowChatScrollBottom(false);
+      document.documentElement.style.removeProperty("--composer-left");
+      document.documentElement.style.removeProperty("--composer-width");
+      document.documentElement.style.removeProperty("--composer-space");
       return;
     }
 
-    const update = () => updateChatBottomState();
+    const update = () => {
+      updateComposerPlacement();
+      updateChatBottomState();
+    };
     const timers = [
       window.setTimeout(update, 80),
       window.setTimeout(update, 260)
@@ -1831,14 +1849,16 @@ function App() {
     const raf = window.requestAnimationFrame(update);
     const observer = new ResizeObserver(() => update());
     const scroller = getChatScroller();
-    [scroller, shellRef.current, chatThreadRef.current]
+    [scroller, shellRef.current, chatThreadRef.current, composerRef.current]
       .filter((element, index, list): element is HTMLElement => Boolean(element) && list.indexOf(element) === index)
       .forEach((element) => observer.observe(element));
+    window.addEventListener("resize", update);
 
     return () => {
       window.cancelAnimationFrame(raf);
       timers.forEach((timer) => window.clearTimeout(timer));
       observer.disconnect();
+      window.removeEventListener("resize", update);
     };
   }, [activeChat, activeChatId, chatIsLoading, timelineItems.length, messages.length, jobs.length, view]);
 
@@ -2807,7 +2827,7 @@ function App() {
     const selectedSpeedLabel = SPEED_OPTIONS.find((option) => option.value === codexSpeed)?.label ?? codexSpeed;
     const showCodexBusy = localCodexBusy || activeRunBusy;
     return (
-      <form className="composer" onSubmit={createJob}>
+      <form className="composer" ref={composerRef} onSubmit={createJob}>
         {attachments.length > 0 && (
           <div className="attachment-list">
             {attachments.map((attachment) => (
