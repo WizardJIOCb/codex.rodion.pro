@@ -1039,7 +1039,12 @@ function App() {
   const localBusyRepoKey = localCodexBusy && localActivity?.repoId && selectedAgent?.id
     ? `${selectedAgent.id}:${localActivity.repoId}`
     : "";
-  const localBusyChatTitle = localCodexBusy && localActivity?.source !== "codex.rodion.pro" ? localActivity?.chatTitle : undefined;
+  const localBusyChatTitle = localCodexBusy ? localActivity?.chatTitle : undefined;
+  const localBusyFallbackChatId = localCodexBusy
+    && localActivity?.source === "codex.rodion.pro"
+    && localBusyRepoKey === `${selectedRepo?.agentId ?? ""}:${selectedRepo?.id ?? ""}`
+    ? activeJob?.chatId ?? activeChatId
+    : "";
   const busyCountByRepo = useMemo(() => {
     const counts = new Map<string, Set<string>>();
     const addBusy = (repoKeyValue: string, busyKey: string) => {
@@ -1048,9 +1053,9 @@ function App() {
       counts.set(repoKeyValue, current);
     };
     runningJobs.forEach((job) => addBusy(`${job.agentId}:${job.repoId}`, job.chatId ? `chat:${job.chatId}` : `job:${job.id}`));
-    if (localBusyRepoKey && localActivity?.source !== "codex.rodion.pro") addBusy(localBusyRepoKey, `local:${localActivity?.chatTitle ?? "codex"}`);
+    if (localBusyRepoKey) addBusy(localBusyRepoKey, `local:${localActivity?.chatTitle ?? localBusyFallbackChatId ?? "codex"}`);
     return new Map([...counts.entries()].map(([key, value]) => [key, value.size]));
-  }, [localBusyRepoKey, localActivity?.chatTitle, localActivity?.source, runningJobs]);
+  }, [localBusyFallbackChatId, localBusyRepoKey, localActivity?.chatTitle, runningJobs]);
   const activeChatIdRef = useRef(activeChatId);
   const activeJobIdRef = useRef(activeJob?.id ?? "");
   const selectedRepoRef = useRef<Repo | undefined>(selectedRepo);
@@ -2693,16 +2698,23 @@ function App() {
                         </form>
                         {chats.map((chat) => (
                           <div className={activeChatId === chat.id ? "nav-chat-row active" : "nav-chat-row"} key={chat.id}>
+                            {(() => {
+                              const chatIsBusy = busyChatIds.has(chat.id)
+                                || (localBusyRepoKey === currentRepoKey && localBusyChatTitle === chat.title)
+                                || (localBusyRepoKey === currentRepoKey && localBusyFallbackChatId === chat.id);
+                              return (
                             <button className="nav-leaf chat-child" onClick={() => {
                               setMobileMenuOpen(false);
                               loadChat(chat.id);
                             }}>
                               <span className="nav-chat-title">
-                                {(busyChatIds.has(chat.id) || (localBusyRepoKey === currentRepoKey && localBusyChatTitle === chat.title)) && <RefreshCw className="spin" size={13} />}
+                                {chatIsBusy && <RefreshCw className="spin" size={13} />}
                                 <span>{chat.title}</span>
                               </span>
                               <small>{new Date(chat.updatedAt).toLocaleString()}</small>
                             </button>
+                              );
+                            })()}
                             <button className="nav-menu-trigger" disabled={busy} onClick={() => setChatMenuId((value) => value === chat.id ? "" : chat.id)} title="Chat menu">
                               <MoreHorizontal size={15} />
                             </button>
