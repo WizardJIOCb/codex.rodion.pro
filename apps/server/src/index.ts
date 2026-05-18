@@ -481,18 +481,41 @@ function clearOrphanedAgentJobs(agentId: string, currentJobId: string | undefine
   }
 }
 
-function freshLocalActivity(activity: LocalCodexActivity | undefined): LocalCodexActivity | undefined {
+function idleLocalActivity(summary = "No recent local Codex activity."): LocalCodexActivity {
+  return { status: "idle", summary, source: "agent heartbeat", detectedAt: nowIso() };
+}
+
+function localActivityHasSyncedFinal(agentId: string | undefined, activity: LocalCodexActivity): boolean {
+  if (!agentId || activity.status !== "busy" || activity.source === "codex.rodion.pro" || !activity.repoId || !activity.updatedAt) return false;
+  const updatedAt = Date.parse(activity.updatedAt);
+  if (!Number.isFinite(updatedAt)) return false;
+  const row = db.prepare(`
+    SELECT MAX(m.created_at) AS latest_assistant_at
+    FROM chat_messages m
+    JOIN chats c ON c.id = m.chat_id
+    WHERE c.agent_id = ? AND c.repo_id = ? AND m.role = 'assistant' AND m.source IN ('codex','vscode')
+  `).get(agentId, activity.repoId) as { latest_assistant_at: string | null } | undefined;
+  const latestAssistantAt = Date.parse(row?.latest_assistant_at ?? "");
+  return Number.isFinite(latestAssistantAt)
+    && latestAssistantAt >= updatedAt - 1000
+    && Date.now() - Math.max(latestAssistantAt, updatedAt) > 12000;
+}
+
+function freshLocalActivity(activity: LocalCodexActivity | undefined, agentId?: string): LocalCodexActivity | undefined {
   if (!activity) return undefined;
   const timestamp = Date.parse(activity.detectedAt);
   if (!Number.isFinite(timestamp) || Date.now() - timestamp > 90000) {
-    return { status: "idle", summary: "No recent local Codex activity.", source: "agent heartbeat", detectedAt: nowIso() };
+    return idleLocalActivity();
+  }
+  if (localActivityHasSyncedFinal(agentId, activity)) {
+    return idleLocalActivity("Local Codex activity already synced a final reply.");
   }
   return activity;
 }
 
 function isAgentLocallyBusy(agentId: string): boolean {
   const row = db.prepare("SELECT local_activity_json FROM agents WHERE id = ?").get(agentId) as Pick<AgentRow, "local_activity_json"> | undefined;
-  return freshLocalActivity(parseLocalActivity(row?.local_activity_json ?? null))?.status === "busy";
+  return freshLocalActivity(parseLocalActivity(row?.local_activity_json ?? null), agentId)?.status === "busy";
 }
 
 function chatAgentId(chatId: string): string {
@@ -1308,7 +1331,7 @@ async function createApp(): Promise<FastifyInstance> {
     if (!auth) return;
     const rows = db.prepare(`SELECT id,user_id,name,hostname,os,agent_version,codex_version,git_version,codex_usage_json,local_activity_json,status,current_job_id,last_seen_at,created_at FROM agents ${agentAccessWhere(auth.user)} ORDER BY created_at`)
       .all(...agentAccessArgs(auth.user)) as AgentRow[];
-    return { agents: rows.map((row) => ({ ...row, codexUsage: parseCodexUsage(row.codex_usage_json), localActivity: freshLocalActivity(parseLocalActivity(row.local_activity_json)) })) };
+    return { agents: rows.map((row) => ({ ...row, codexUsage: parseCodexUsage(row.codex_usage_json), localActivity: freshLocalActivity(parseLocalActivity(row.local_activity_json), row.id) })) };
   });
 
   app.get("/api/repos", async (request, reply) => {
