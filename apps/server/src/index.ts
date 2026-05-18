@@ -825,6 +825,7 @@ async function authenticateAgent(token: string | undefined): Promise<AgentRow | 
 
 function serializeJob(job: JobRow, options: { includeDiff?: boolean } = {}) {
   const includeDiff = options.includeDiff ?? true;
+  const progress = parseJobProgress(job.progress_json);
   return {
     id: job.id,
     chatId: job.chat_id,
@@ -845,12 +846,23 @@ function serializeJob(job: JobRow, options: { includeDiff?: boolean } = {}) {
     gitDiffStat: job.git_diff_stat,
     gitDiff: includeDiff ? job.git_diff : null,
     gitDiffOmitted: !includeDiff && Boolean(job.git_diff),
+    progress,
     branchName: job.branch_name,
     codexThreadId: job.codex_thread_id,
     createdAt: job.created_at,
     startedAt: job.started_at,
     finishedAt: job.finished_at
   };
+}
+
+function parseJobProgress(value: string | null) {
+  if (!value) return undefined;
+  try {
+    const parsed = JSON.parse(value) as Extract<AgentToServer, { type: "job.progress" }>;
+    return parsed.type === "job.progress" ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function serializeChat(chat: ChatRow) {
@@ -875,7 +887,7 @@ function chatEtag(chat: ChatRow, messages: ChatMessageRow[], jobs: JobRow[]) {
     messageCount: messages.length,
     lastMessageAt: messages.at(-1)?.created_at ?? "",
     jobCount: jobs.length,
-    jobs: jobs.map((job) => [job.id, job.status, job.started_at, job.finished_at, job.git_diff_stat?.length ?? 0, job.git_diff?.length ?? 0])
+    jobs: jobs.map((job) => [job.id, job.status, job.started_at, job.finished_at, job.git_diff_stat?.length ?? 0, job.git_diff?.length ?? 0, job.progress_json?.length ?? 0])
   });
   return `W/"${createHash("sha256").update(value).digest("base64url")}"`;
 }
@@ -1886,7 +1898,8 @@ async function createApp(): Promise<FastifyInstance> {
         appendLog({ job_id: parsed.jobId, stream: parsed.stream, message: parsed.message, at: parsed.at });
       }
       if (parsed.type === "job.progress") {
-        db.prepare("UPDATE jobs SET status='running', started_at=COALESCE(started_at, ?) WHERE id=?").run(nowIso(), parsed.jobId);
+        db.prepare("UPDATE jobs SET status='running', started_at=COALESCE(started_at, ?), progress_json=? WHERE id=?")
+          .run(nowIso(), JSON.stringify(parsed), parsed.jobId);
         broadcast(parsed);
       }
       if (parsed.type === "job.done") {

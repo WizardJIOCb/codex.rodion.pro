@@ -93,6 +93,7 @@ export type JobRow = {
   git_status: string | null;
   git_diff_stat: string | null;
   git_diff: string | null;
+  progress_json: string | null;
   branch_name: string | null;
   codex_thread_id: string | null;
   created_at: string;
@@ -229,6 +230,7 @@ export function openDb(path: string): DatabaseSync {
       git_status TEXT,
       git_diff_stat TEXT,
       git_diff TEXT,
+      progress_json TEXT,
       branch_name TEXT,
       codex_thread_id TEXT,
       created_at TEXT NOT NULL,
@@ -361,6 +363,9 @@ export function openDb(path: string): DatabaseSync {
   }
   if (!jobColumns.some((column) => column.name === "speed")) {
     db.exec("ALTER TABLE jobs ADD COLUMN speed TEXT");
+  }
+  if (!jobColumns.some((column) => column.name === "progress_json")) {
+    db.exec("ALTER TABLE jobs ADD COLUMN progress_json TEXT");
   }
   const repoColumns = db.prepare("PRAGMA table_info(repos)").all() as Array<{ name: string }>;
   if (!repoColumns.some((column) => column.name === "github_url")) {

@@ -244,6 +244,7 @@ type Job = {
   gitDiffStat: string | null;
   gitDiff: string | null;
   gitDiffOmitted?: boolean;
+  progress?: JobProgress | null;
   createdAt: string;
   startedAt?: string | null;
   finishedAt?: string | null;
@@ -974,6 +975,13 @@ function mergeChatMessages(current: ChatMessage[], incoming: ChatMessage[]) {
   });
 }
 
+function progressMapFromJobs(jobs: Job[]) {
+  const entries = jobs
+    .map((job) => job.progress ? [job.id, job.progress] as const : null)
+    .filter((entry): entry is readonly [string, JobProgress] => Boolean(entry));
+  return Object.fromEntries(entries);
+}
+
 function messageUpdateSignature(message: ChatMessage) {
   const actionCount = Array.isArray(message.metadata?.codexActions) ? message.metadata.codexActions.length : 0;
   const changeStat = typeof message.metadata?.gitDiffStat === "string" ? message.metadata.gitDiffStat.length : 0;
@@ -1220,7 +1228,7 @@ function App() {
   activeChatIdRef.current = activeChatId;
   activeJobIdRef.current = activeJob?.id ?? "";
   selectedRepoRef.current = selectedRepo;
-  const activeProgress = activeJob ? progressByJob[activeJob.id] ?? {
+  const activeProgress = activeJob ? progressByJob[activeJob.id] ?? activeJob.progress ?? {
     jobId: activeJob.id,
     phase: activeJob.status,
     message: activeJob.status === "running" ? "Codex is running." : `Job is ${activeJob.status}.`,
@@ -1441,6 +1449,7 @@ function App() {
       setActiveChatId(chatId);
       setJobs((current) => mergeJobs(current.filter((job) => job.chatId === chatId), data.jobs));
       setAllJobs((current) => mergeJobs(current, data.jobs));
+      setProgressByJob((current) => ({ ...current, ...progressMapFromJobs(data.jobs) }));
       setMessages((current) => mergeChatMessages(current.filter((message) => message.chatId === chatId), data.messages ?? []));
       const targetJobId = preferredJobId ?? data.jobs[0]?.id;
       if (targetJobId) {
@@ -1469,6 +1478,7 @@ function App() {
     const data = await response.json();
     setActiveJob(data.job);
     setAllJobs((current) => mergeJobs(current, [data.job]));
+    if (data.job?.progress) setProgressByJob((current) => ({ ...current, [data.job.id]: data.job.progress }));
     setLogs(data.logs);
   }
 
@@ -1479,6 +1489,7 @@ function App() {
     setAllJobs((current) => mergeJobs(current, [data.job]));
     setJobs((current) => mergeJobs(current, [data.job]));
     setActiveJob((current) => current?.id === jobId ? data.job : current);
+    if (data.job?.progress) setProgressByJob((current) => ({ ...current, [data.job.id]: data.job.progress }));
   }
 
   async function loadMessageDetails(messageId: string) {
@@ -2659,7 +2670,9 @@ function App() {
             })}
           </div>
         ) : fileListVisible ? (
-          <div className="codex-change-empty">No files changed.</div>
+          <div className="codex-change-empty">
+            {summary.files > 0 ? "File list is loading or not available yet." : "No files changed."}
+          </div>
         ) : null}
       </div>
     );
@@ -2738,7 +2751,7 @@ function App() {
             {summary.messages.map((message, index) => {
               const jobId = messageJobId(message);
               const messageJob = jobId ? jobs.find((job) => job.id === jobId) ?? summary.job : summary.job;
-              const messageProgress = messageJob ? progressByJob[messageJob.id] ?? null : null;
+              const messageProgress = messageJob ? progressByJob[messageJob.id] ?? messageJob.progress ?? null : null;
               return (
                 <article className="run-trace-step" key={message.id}>
                   <div className="message-meta">
@@ -3267,7 +3280,7 @@ function App() {
                         const { message, collapsedRun } = item;
                         const jobId = messageJobId(message);
                         const messageJob = jobs.find((job) => job.id === jobId);
-                        const messageProgress = jobId ? progressByJob[jobId] ?? null : null;
+                        const messageProgress = messageJob ? progressByJob[messageJob.id] ?? messageJob.progress ?? null : null;
                         const isNew = highlightedMessageIds.has(message.id);
                         const isFirst = index === 0;
                         const isLast = index === timelineItems.length - 1;
