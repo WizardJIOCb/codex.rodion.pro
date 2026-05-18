@@ -1240,6 +1240,7 @@ function App() {
   const loadAllJobsTimerRef = useRef<number | undefined>(undefined);
   const loadChatsAbortRef = useRef<AbortController | null>(null);
   const loadChatAbortRef = useRef<AbortController | null>(null);
+  const loadChatInFlightRef = useRef<{ chatId: string; controller: AbortController; foreground: boolean } | null>(null);
   const chatLoadingStartedRef = useRef(0);
   const shellRef = useRef<HTMLElement | null>(null);
   const chatThreadRef = useRef<HTMLElement | null>(null);
@@ -1434,9 +1435,12 @@ function App() {
   }
 
   async function loadChat(chatId: string, preferredJobId?: string, showLoader = false) {
+    const currentLoad = loadChatInFlightRef.current;
+    if (currentLoad?.chatId === chatId && currentLoad.foreground && !showLoader) return;
     loadChatAbortRef.current?.abort();
     const controller = new AbortController();
     loadChatAbortRef.current = controller;
+    loadChatInFlightRef.current = { chatId, controller, foreground: showLoader };
     const loadingStartedAt = Date.now();
     if (showLoader) {
       chatLoadingStartedRef.current = loadingStartedAt;
@@ -1449,6 +1453,7 @@ function App() {
     try {
       const cached = chatCacheRef.current.get(chatId);
       const response = await fetch(`/api/chats/${chatId}`, {
+        cache: "no-store",
         signal: controller.signal,
         headers: cached?.etag ? { "If-None-Match": cached.etag } : undefined
       });
@@ -1528,11 +1533,15 @@ function App() {
       if (loadChatAbortRef.current === controller) {
         loadChatAbortRef.current = null;
       }
+      if (loadChatInFlightRef.current?.controller === controller) {
+        loadChatInFlightRef.current = null;
+      }
       clearChatLoader(chatId, loadingStartedAt);
       if (!isAbortError(error)) throw error;
     } finally {
       window.clearTimeout(timeout);
       if (loadChatAbortRef.current === controller) loadChatAbortRef.current = null;
+      if (loadChatInFlightRef.current?.controller === controller) loadChatInFlightRef.current = null;
       clearChatLoader(chatId, loadingStartedAt);
     }
   }
