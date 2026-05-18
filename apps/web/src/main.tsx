@@ -1249,6 +1249,7 @@ function App() {
   const lastMessageRef = useRef<HTMLElement | null>(null);
   const currentScrollChatRef = useRef("");
   const chatCacheRef = useRef<Map<string, { etag: string; data: ChatPayload }>>(new Map());
+  const missingChangeDetailsRequestedRef = useRef<Set<string>>(new Set());
   const previousMessageIdsRef = useRef<Set<string>>(new Set());
   const previousMessageSignaturesRef = useRef<Map<string, string>>(new Map());
   const chatAtBottomRef = useRef(true);
@@ -1918,6 +1919,45 @@ function App() {
     const raf = window.requestAnimationFrame(() => scrollChatToLatest("smooth"));
     return () => window.cancelAnimationFrame(raf);
   }, [showChatThinkingIndicator, activeChatId]);
+
+  useEffect(() => {
+    if (!activeChat || chatIsLoading) return;
+
+    for (const item of timelineItems) {
+      const { message } = item;
+      if (message.role !== "assistant") continue;
+      const actionKey = `changes:${message.id}`;
+      if (expandedActions[actionKey] === false) continue;
+
+      const jobId = messageJobId(message);
+      const messageJob = jobs.find((job) => job.id === jobId);
+      const progress = messageJob ? progressByJob[messageJob.id] ?? messageJob.progress ?? null : null;
+      const stat = messageJob?.gitDiffStat || (typeof message.metadata?.gitDiffStat === "string" ? message.metadata.gitDiffStat : "");
+      const diff = messageJob?.gitDiff || (typeof message.metadata?.gitDiff === "string" ? message.metadata.gitDiff : "");
+      if (!stat && !progress?.files?.length) continue;
+
+      const fileDiffs = parseUnifiedDiff(diff);
+      const rows = fileDiffs.length ? diffRowsFromFileDiffs(fileDiffs) : diffRows(stat || null, progress?.files);
+      const summary = fileDiffs.length ? diffSummaryFromRows(rows) : diffSummary(stat || null, progress);
+      if (rows.length || summary.files <= 0) continue;
+
+      if (messageJob?.id && !messageJob.gitDiff) {
+        const requestKey = `job:${messageJob.id}:${messageJob.status}:${messageJob.gitDiffStat?.length ?? 0}:${messageJob.gitDiffOmitted ? 1 : 0}`;
+        if (!missingChangeDetailsRequestedRef.current.has(requestKey)) {
+          missingChangeDetailsRequestedRef.current.add(requestKey);
+          loadJobDetails(messageJob.id).catch(() => undefined);
+        }
+      }
+
+      if (message.metadata?.metadataOmitted || message.metadata?.gitDiffOmitted) {
+        const requestKey = `message:${message.id}:${message.metadata?.metadataOmitted ? 1 : 0}:${message.metadata?.gitDiffOmitted ? 1 : 0}`;
+        if (!missingChangeDetailsRequestedRef.current.has(requestKey)) {
+          missingChangeDetailsRequestedRef.current.add(requestKey);
+          loadMessageDetails(message.id).catch(() => undefined);
+        }
+      }
+    }
+  }, [activeChat, chatIsLoading, expandedActions, jobs, messages, progressByJob, timelineItems]);
 
   useEffect(() => {
     const now = Date.now();
