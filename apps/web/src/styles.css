@@ -100,6 +100,7 @@ textarea:focus {
 .topbar h1 {
   margin: 0;
   font-size: 24px;
+  line-height: 1.12;
   letter-spacing: 0;
 }
 
@@ -544,12 +545,12 @@ textarea:focus {
 }
 
 .topbar {
-  min-height: 64px;
+  min-height: 72px;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
-  padding: 9px 12px;
+  padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.9);
@@ -565,7 +566,7 @@ textarea:focus {
   min-width: 0;
   display: grid;
   justify-items: center;
-  gap: 1px;
+  gap: 3px;
   text-align: center;
 }
 
