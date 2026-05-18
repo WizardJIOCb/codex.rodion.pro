@@ -529,6 +529,50 @@ function serializeMessage(message: ChatMessageRow, options: SerializeAttachmentO
   };
 }
 
+function serializeMessagesForChat(chatId: string, messages: ChatMessageRow[], options: SerializeAttachmentOptions = {}) {
+  const jobAttachments = db.prepare(`
+    SELECT a.*
+    FROM job_attachments a
+    JOIN chat_messages m ON m.id = a.chat_message_id
+    WHERE m.chat_id = ?
+    ORDER BY a.created_at ASC
+  `).all(chatId) as AttachmentRow[];
+  const chatAttachments = db.prepare(`
+    SELECT a.*
+    FROM chat_attachments a
+    JOIN chat_messages m ON m.id = a.chat_message_id
+    WHERE m.chat_id = ?
+    ORDER BY a.created_at ASC
+  `).all(chatId) as ChatAttachmentRow[];
+  const jobAttachmentsByMessage = new Map<string, AttachmentRow[]>();
+  const chatAttachmentsByMessage = new Map<string, ChatAttachmentRow[]>();
+  jobAttachments.forEach((attachment) => {
+    if (!attachment.chat_message_id) return;
+    const current = jobAttachmentsByMessage.get(attachment.chat_message_id) ?? [];
+    current.push(attachment);
+    jobAttachmentsByMessage.set(attachment.chat_message_id, current);
+  });
+  chatAttachments.forEach((attachment) => {
+    const current = chatAttachmentsByMessage.get(attachment.chat_message_id) ?? [];
+    current.push(attachment);
+    chatAttachmentsByMessage.set(attachment.chat_message_id, current);
+  });
+  return messages.map((message) => ({
+    id: message.id,
+    chatId: message.chat_id,
+    role: message.role,
+    content: message.content,
+    source: message.source,
+    externalId: message.external_id,
+    metadata: message.metadata_json ? JSON.parse(message.metadata_json) : undefined,
+    createdAt: message.created_at,
+    attachments: [
+      ...(jobAttachmentsByMessage.get(message.id) ?? []).map((attachment) => serializeAttachment(attachment, options)),
+      ...(chatAttachmentsByMessage.get(message.id) ?? []).map((attachment) => serializeChatAttachment(attachment, options))
+    ]
+  }));
+}
+
 function serializeAttachment(attachment: AttachmentRow, options: SerializeAttachmentOptions = {}) {
   return {
     id: attachment.id,
@@ -1472,7 +1516,7 @@ async function createApp(): Promise<FastifyInstance> {
     if (!chat) return reply.code(404).send({ error: "not_found" });
     const rows = db.prepare("SELECT * FROM jobs WHERE chat_id = ? ORDER BY created_at DESC").all(chatId) as JobRow[];
     const messages = db.prepare("SELECT * FROM chat_messages WHERE chat_id = ? ORDER BY created_at ASC").all(chatId) as ChatMessageRow[];
-    return { chat: serializeChat(chat), jobs: rows.map(serializeJob), messages: messages.map((message) => serializeMessage(message, { includeData: true })) };
+    return { chat: serializeChat(chat), jobs: rows.map(serializeJob), messages: serializeMessagesForChat(chatId, messages, { includeData: true }) };
   });
 
   app.get("/api/job-attachments/:id", async (request, reply) => {
