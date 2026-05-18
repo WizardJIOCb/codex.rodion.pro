@@ -3358,7 +3358,7 @@ function App() {
                         const isNew = highlightedMessageIds.has(message.id);
                         const isFirst = index === 0;
                         const isLast = index === timelineItems.length - 1;
-                        const author = message.role === "user" ? "You" : message.source === "vscode" ? "VS Code" : "Codex";
+                        const author = message.role === "user" ? currentUser?.nickname || currentUser?.email || "You" : message.source === "vscode" ? "VS Code" : "Codex";
                         const assistantDetails = message.role === "assistant" || message.role === "tool" || message.role === "system"
                           ? messageRunDetails(message, messageJob, collapsedRun)
                           : undefined;
@@ -3379,6 +3379,11 @@ function App() {
                                     {assistantDetails.settings.length > 0 && <small className="message-run-settings">{assistantDetails.settings.join(" · ")}</small>}
                                   </span>
                                   {assistantDetails.timing.length > 0 && <small>{assistantDetails.timing.join(" · ")}</small>}
+                                </div>
+                              ) : message.role === "user" ? (
+                                <div className="message-author-stack">
+                                  <span>{author}</span>
+                                  <small>{new Date(message.createdAt).toLocaleString()}</small>
                                 </div>
                               ) : (
                                 <>
