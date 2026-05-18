@@ -1240,6 +1240,7 @@ function App() {
   const loadAllJobsTimerRef = useRef<number | undefined>(undefined);
   const loadChatsAbortRef = useRef<AbortController | null>(null);
   const loadChatAbortRef = useRef<AbortController | null>(null);
+  const chatLoadingStartedRef = useRef(0);
   const shellRef = useRef<HTMLElement | null>(null);
   const chatThreadRef = useRef<HTMLElement | null>(null);
   const composerRef = useRef<HTMLFormElement | null>(null);
@@ -1328,6 +1329,13 @@ function App() {
     if (!composer) return;
     const height = Math.ceil(composer.getBoundingClientRect().height);
     document.documentElement.style.setProperty("--composer-space", `${height + 12}px`);
+  }
+
+  function clearChatLoader(chatId: string, startedAt: number) {
+    if (chatLoadingStartedRef.current && chatLoadingStartedRef.current !== startedAt) return;
+    if (chatLoadingStartedRef.current === startedAt) chatLoadingStartedRef.current = 0;
+    setChatLoadingId((current) => current === chatId ? "" : current);
+    setChatLoadingProgress((current) => current?.startedAt === startedAt ? null : current);
   }
 
   function renderChatThinkingIndicator() {
@@ -1431,11 +1439,13 @@ function App() {
     loadChatAbortRef.current = controller;
     const loadingStartedAt = Date.now();
     if (showLoader) {
+      chatLoadingStartedRef.current = loadingStartedAt;
       setActiveChatId(chatId);
       setChatLoadingId(chatId);
       setChatLoadingProgress({ phase: "request", loadedBytes: 0, percent: 4, startedAt: loadingStartedAt });
       setChatNotice("");
     }
+    const timeout = window.setTimeout(() => controller.abort(), 30000);
     try {
       const cached = chatCacheRef.current.get(chatId);
       const response = await fetch(`/api/chats/${chatId}`, {
@@ -1452,8 +1462,7 @@ function App() {
       } else {
       if (!response.ok) {
         loadChatAbortRef.current = null;
-        setChatLoadingId((current) => current === chatId ? "" : current);
-        setChatLoadingProgress((current) => current?.startedAt === loadingStartedAt ? null : current);
+        clearChatLoader(chatId, loadingStartedAt);
         return;
       }
       const totalHeader = Number(response.headers.get("content-length") ?? 0);
@@ -1518,10 +1527,13 @@ function App() {
     } catch (error) {
       if (loadChatAbortRef.current === controller) {
         loadChatAbortRef.current = null;
-        setChatLoadingId((current) => current === chatId ? "" : current);
-        setChatLoadingProgress((current) => current?.startedAt === loadingStartedAt ? null : current);
       }
+      clearChatLoader(chatId, loadingStartedAt);
       if (!isAbortError(error)) throw error;
+    } finally {
+      window.clearTimeout(timeout);
+      if (loadChatAbortRef.current === controller) loadChatAbortRef.current = null;
+      clearChatLoader(chatId, loadingStartedAt);
     }
   }
 
