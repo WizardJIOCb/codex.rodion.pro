@@ -24,6 +24,8 @@ import {
   MoreHorizontal,
   MessageSquare,
   Paperclip,
+  PanelLeftClose,
+  PanelLeftOpen,
   Play,
   Plus,
   RefreshCw,
@@ -1107,6 +1109,7 @@ function App() {
   const [showChatScrollTop, setShowChatScrollTop] = useState(false);
   const [showChatScrollBottom, setShowChatScrollBottom] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const selectedRepo = useMemo(() => repos.find((repo) => `${repo.agentId}:${repo.id}` === repoKey), [repoKey, repos]);
   const activeChat = useMemo(() => chats.find((chat) => chat.id === activeChatId), [activeChatId, chats]);
@@ -1292,13 +1295,9 @@ function App() {
   }
 
   function updateComposerPlacement() {
-    const shell = shellRef.current;
     const composer = composerRef.current;
-    if (!shell || !composer) return;
-    const rect = shell.getBoundingClientRect();
+    if (!composer) return;
     const height = Math.ceil(composer.getBoundingClientRect().height);
-    document.documentElement.style.setProperty("--composer-left", `${Math.max(0, rect.left)}px`);
-    document.documentElement.style.setProperty("--composer-width", `${Math.max(0, rect.width)}px`);
     document.documentElement.style.setProperty("--composer-space", `${height + 24}px`);
   }
 
@@ -1832,8 +1831,6 @@ function App() {
     if (!activeChat) {
       setShowChatScrollTop(false);
       setShowChatScrollBottom(false);
-      document.documentElement.style.removeProperty("--composer-left");
-      document.documentElement.style.removeProperty("--composer-width");
       document.documentElement.style.removeProperty("--composer-space");
       return;
     }
@@ -3022,7 +3019,7 @@ function App() {
 
   return (
     <>
-    <main className="app-frame">
+    <main className={`app-frame ${sidebarCollapsed ? "nav-collapsed" : ""}`}>
       <aside className={`app-nav ${mobileMenuOpen ? "open" : ""}`}>
         <div className="nav-brand">
           <img className="brand-logo" src="/favicon.svg" alt="" />
@@ -3117,6 +3114,14 @@ function App() {
 
       <section className="shell" ref={shellRef} onScroll={updateChatBottomState}>
       <header className="topbar">
+        <button
+          className="icon sidebar-toggle"
+          type="button"
+          onClick={() => setSidebarCollapsed((value) => !value)}
+          title={sidebarCollapsed ? "Показать боковую панель" : "Скрыть боковую панель"}
+        >
+          {sidebarCollapsed ? <PanelLeftOpen size={19} /> : <PanelLeftClose size={19} />}
+        </button>
         <button className="icon mobile-menu-toggle" type="button" onClick={() => setMobileMenuOpen(true)} title="Меню">
           <Menu size={19} />
         </button>
