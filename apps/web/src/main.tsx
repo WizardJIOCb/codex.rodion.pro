@@ -1003,6 +1003,15 @@ function App() {
     && (message.externalId === `job:${activeJob.id}:final` || typeof message.metadata?.status === "string")
   )));
   const activeRunBusy = Boolean(activeJob && ["queued", "assigned", "running"].includes(activeJob.status) && !activeJobFinalMessageSeen);
+  const runningJobs = useMemo(() => mergeJobs(allJobs, activeJob && activeRunBusy ? [activeJob] : []).filter(isJobRunning), [allJobs, activeJob, activeRunBusy]);
+  const webActivityRunning = Boolean(
+    localActivity?.source === "codex.rodion.pro"
+    && (
+      activeRunBusy
+      || (selectedAgent?.current_job_id && runningJobs.some((job) => job.id === selectedAgent.current_job_id))
+    )
+  );
+  const externalLocalActivityBusy = Boolean(localActivity?.source !== "codex.rodion.pro" && localActivity?.status === "busy");
   const staleCurrentWebJob = Boolean(selectedAgent?.current_job_id && selectedAgent.current_job_id === activeJob?.id && !activeRunBusy);
   const staleLocalWebBusy = Boolean(localActivity?.source === "codex.rodion.pro" && !activeRunBusy && activeJob?.finishedAt);
   const latestLocalAssistantMessageAt = Math.max(0, ...messages
@@ -1019,7 +1028,7 @@ function App() {
     && nowTick - Math.max(latestLocalAssistantMessageAt, localActivityUpdatedAt) > 12000
   );
   const rawLocalCodexBusy = Boolean(
-    (localActivity?.status === "busy" || selectedAgent?.current_job_id)
+    (externalLocalActivityBusy || webActivityRunning)
     && !staleCurrentWebJob
     && !staleLocalWebBusy
     && !localFinalMessageLikelySeen
@@ -1034,7 +1043,6 @@ function App() {
       ? localBusySince
       : undefined;
   const thinkingSeconds = thinkingSince ? Math.max(0, Math.floor((nowTick - Date.parse(thinkingSince)) / 1000)) : 0;
-  const runningJobs = useMemo(() => mergeJobs(allJobs, activeJob && activeRunBusy ? [activeJob] : []).filter(isJobRunning), [allJobs, activeJob, activeRunBusy]);
   const busyChatIds = useMemo(() => new Set(runningJobs.map((job) => job.chatId).filter((chatId): chatId is string => Boolean(chatId))), [runningJobs]);
   const localBusyRepoKey = localCodexBusy && localActivity?.repoId && selectedAgent?.id
     ? `${selectedAgent.id}:${localActivity.repoId}`
