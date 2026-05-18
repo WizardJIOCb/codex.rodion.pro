@@ -2584,8 +2584,8 @@ function App() {
   }
 
   function expandChangeCard(actionKey: string, message: ChatMessage, job?: Job) {
-    const willExpand = !expandedActions[actionKey];
-    setExpandedActions((current) => ({ ...current, [actionKey]: !current[actionKey] }));
+    const willExpand = expandedActions[actionKey] === false;
+    setExpandedActions((current) => ({ ...current, [actionKey]: current[actionKey] === false }));
     if (!willExpand) return;
     if (job?.id && (job.gitDiffOmitted || (job.gitDiffStat && !job.gitDiff))) {
       loadJobDetails(job.id).catch(() => undefined);
