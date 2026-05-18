@@ -1265,6 +1265,7 @@ function App() {
   } : null;
   const firstActiveProgressFile = activeProgress?.files?.[0];
   const timelineItems = useMemo(() => buildChatTimeline(messages, jobs, localCodexBusy || activeRunBusy), [messages, jobs, localCodexBusy, activeRunBusy]);
+  const showChatThinkingIndicator = Boolean(activeChat && !chatIsLoading && (localCodexBusy || activeRunBusy));
 
   function isScrollableElement(element: HTMLElement | null | undefined): element is HTMLElement {
     if (!element || element.scrollHeight <= element.clientHeight + 1) return false;
@@ -1320,6 +1321,19 @@ function App() {
     if (!composer) return;
     const height = Math.ceil(composer.getBoundingClientRect().height);
     document.documentElement.style.setProperty("--composer-space", `${height + 12}px`);
+  }
+
+  function renderChatThinkingIndicator() {
+    if (!showChatThinkingIndicator) return null;
+    return (
+      <article className="thinking-message" aria-live="polite">
+        <div className="thinking-chip">
+          <span className="thinking-spark" aria-hidden="true" />
+          <span>Thinking</span>
+          <small>{formatDuration(thinkingSeconds)}</small>
+        </div>
+      </article>
+    );
   }
 
   async function refresh() {
@@ -1879,6 +1893,12 @@ function App() {
       window.removeEventListener("resize", update);
     };
   }, [activeChat, activeChatId, chatIsLoading, timelineItems.length, messages.length, jobs.length, view]);
+
+  useEffect(() => {
+    if (!showChatThinkingIndicator || !chatAtBottomRef.current) return;
+    const raf = window.requestAnimationFrame(() => scrollChatToLatest("smooth"));
+    return () => window.cancelAnimationFrame(raf);
+  }, [showChatThinkingIndicator, activeChatId]);
 
   useEffect(() => {
     const now = Date.now();
@@ -3356,66 +3376,65 @@ function App() {
                               : "Ожидаю ответ сервера"}
                           </small>
                         </div>
-                      ) : timelineItems.length ? timelineItems.map((item, index) => {
-                        const { message, collapsedRun } = item;
-                        const jobId = messageJobId(message);
-                        const messageJob = jobs.find((job) => job.id === jobId);
-                        const messageProgress = messageJob ? progressByJob[messageJob.id] ?? messageJob.progress ?? null : null;
-                        const isNew = highlightedMessageIds.has(message.id);
-                        const isFirst = index === 0;
-                        const isLast = index === timelineItems.length - 1;
-                        const author = message.role === "user" ? currentUser?.nickname || currentUser?.email || "You" : message.source === "vscode" ? "VS Code" : "Codex";
-                        const assistantDetails = message.role === "assistant" || message.role === "tool" || message.role === "system"
-                          ? messageRunDetails(message, messageJob, collapsedRun)
-                          : undefined;
-                        return (
-                          <article
-                            className={`message ${message.role}${isNew ? " new-message" : ""}`}
-                            key={message.id}
-                            ref={isFirst || isLast ? (node) => {
-                              if (isFirst) firstMessageRef.current = node;
-                              if (isLast) lastMessageRef.current = node;
-                            } : undefined}
-                          >
-                            <div className="message-meta">
-                              {assistantDetails ? (
-                                <div className="message-author-stack">
-                                  <span>
-                                    {author}
-                                    {assistantDetails.settings.length > 0 && <small className="message-run-settings">{assistantDetails.settings.join(" · ")}</small>}
-                                  </span>
-                                  {assistantDetails.timing.length > 0 && <small>{assistantDetails.timing.join(" · ")}</small>}
+                      ) : (
+                        <>
+                          {timelineItems.length ? timelineItems.map((item, index) => {
+                            const { message, collapsedRun } = item;
+                            const jobId = messageJobId(message);
+                            const messageJob = jobs.find((job) => job.id === jobId);
+                            const messageProgress = messageJob ? progressByJob[messageJob.id] ?? messageJob.progress ?? null : null;
+                            const isNew = highlightedMessageIds.has(message.id);
+                            const isFirst = index === 0;
+                            const isLast = index === timelineItems.length - 1;
+                            const author = message.role === "user" ? currentUser?.nickname || currentUser?.email || "You" : message.source === "vscode" ? "VS Code" : "Codex";
+                            const assistantDetails = message.role === "assistant" || message.role === "tool" || message.role === "system"
+                              ? messageRunDetails(message, messageJob, collapsedRun)
+                              : undefined;
+                            return (
+                              <article
+                                className={`message ${message.role}${isNew ? " new-message" : ""}`}
+                                key={message.id}
+                                ref={isFirst || isLast ? (node) => {
+                                  if (isFirst) firstMessageRef.current = node;
+                                  if (isLast) lastMessageRef.current = node;
+                                } : undefined}
+                              >
+                                <div className="message-meta">
+                                  {assistantDetails ? (
+                                    <div className="message-author-stack">
+                                      <span>
+                                        {author}
+                                        {assistantDetails.settings.length > 0 && <small className="message-run-settings">{assistantDetails.settings.join(" · ")}</small>}
+                                      </span>
+                                      {assistantDetails.timing.length > 0 && <small>{assistantDetails.timing.join(" · ")}</small>}
+                                    </div>
+                                  ) : message.role === "user" ? (
+                                    <div className="message-author-stack">
+                                      <span>{author}</span>
+                                      <small>{new Date(message.createdAt).toLocaleString()}</small>
+                                    </div>
+                                  ) : (
+                                    <>
+                                      <span>{author}</span>
+                                      <small>
+                                        {new Date(message.createdAt).toLocaleString()}
+                                        {collapsedRun && <> · Работал {formatDuration(collapsedRun.durationSeconds)}</>}
+                                      </small>
+                                    </>
+                                  )}
                                 </div>
-                              ) : message.role === "user" ? (
-                                <div className="message-author-stack">
-                                  <span>{author}</span>
-                                  <small>{new Date(message.createdAt).toLocaleString()}</small>
-                                </div>
-                              ) : (
-                                <>
-                                  <span>{author}</span>
-                                  <small>
-                                    {new Date(message.createdAt).toLocaleString()}
-                                    {collapsedRun && <> · Работал {formatDuration(collapsedRun.durationSeconds)}</>}
-                                  </small>
-                                </>
-                              )}
-                            </div>
-                            {collapsedRun && renderCollapsedRunTrace(message, collapsedRun)}
-                            {renderRichText(message.content, "rich-text message-body")}
-                            {renderMessageAttachments(message.attachments, setImagePreview)}
-                            {jobId === activeJob?.id && activeRunBusy && (
-                              <div className="message-thinking">
-                                <RefreshCw className="spin" size={14} />
-                                <span>Codex думает {formatDuration(thinkingSeconds)}</span>
-                              </div>
-                            )}
-                            {renderCodexActions(message, messageJob)}
-                            {renderCodexChangeCard(message, messageJob, messageProgress)}
-                          </article>
-                        );
-                      }) : (
-                        <div className="empty">Начни этот чат или дождись синхронизации истории из локального Codex/VS Code.</div>
+                                {collapsedRun && renderCollapsedRunTrace(message, collapsedRun)}
+                                {renderRichText(message.content, "rich-text message-body")}
+                                {renderMessageAttachments(message.attachments, setImagePreview)}
+                                {renderCodexActions(message, messageJob)}
+                                {renderCodexChangeCard(message, messageJob, messageProgress)}
+                              </article>
+                            );
+                          }) : (
+                            <div className="empty">Начни этот чат или дождись синхронизации истории из локального Codex/VS Code.</div>
+                          )}
+                          {renderChatThinkingIndicator()}
+                        </>
                       )}
                     </section>
                     {renderComposer()}
