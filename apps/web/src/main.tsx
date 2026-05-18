@@ -571,6 +571,23 @@ function messageDurationSeconds(message: ChatMessage) {
   return Math.max(0, Math.floor((finishedAt - startedAt) / 1000));
 }
 
+function messageRunDetailParts(message: ChatMessage, job: Job | undefined, collapsedRun?: CollapsedRunSummary) {
+  const metadataModel = typeof message.metadata?.model === "string" ? message.metadata.model : "";
+  const metadataReasoning = typeof message.metadata?.reasoningEffort === "string" ? message.metadata.reasoningEffort : "";
+  const metadataSpeed = typeof message.metadata?.speed === "string" ? message.metadata.speed : "";
+  const model = job?.model || metadataModel;
+  const reasoning = job?.reasoningEffort || metadataReasoning;
+  const speed = job?.speed || metadataSpeed;
+  const durationSeconds = collapsedRun?.durationSeconds ?? (job?.finishedAt ? jobDurationSeconds(job) : messageDurationSeconds(message));
+  return [
+    model ? CODEX_MODEL_OPTIONS.find((option) => option.value === model)?.label ?? model : "",
+    reasoning ? `Intelligence ${REASONING_OPTIONS.find((option) => option.value === reasoning)?.label ?? reasoning}` : "",
+    speed ? `Speed ${SPEED_OPTIONS.find((option) => option.value === speed)?.label ?? speed}` : "",
+    new Date(message.createdAt).toLocaleString(),
+    durationSeconds > 0 ? `Работал ${formatDuration(durationSeconds)}` : ""
+  ].filter(Boolean);
+}
+
 function parseCommandOutput(output: string) {
   const normalized = normalizeDisplayText(output).trim();
   const exitCode = normalized.match(/^Exit code:\s*([^\n]+)$/im)?.[1]?.trim();
@@ -3338,6 +3355,10 @@ function App() {
                         const isNew = highlightedMessageIds.has(message.id);
                         const isFirst = index === 0;
                         const isLast = index === timelineItems.length - 1;
+                        const author = message.role === "user" ? "You" : message.source === "vscode" ? "VS Code" : "Codex";
+                        const assistantDetails = message.role === "assistant" || message.role === "tool" || message.role === "system"
+                          ? messageRunDetailParts(message, messageJob, collapsedRun)
+                          : [];
                         return (
                           <article
                             className={`message ${message.role}${isNew ? " new-message" : ""}`}
@@ -3348,11 +3369,20 @@ function App() {
                             } : undefined}
                           >
                             <div className="message-meta">
-                              <span>{message.role === "user" ? "You" : message.source === "vscode" ? "VS Code" : "Codex"}</span>
-                              <small>
-                                {new Date(message.createdAt).toLocaleString()}
-                                {collapsedRun && <> · Работал {formatDuration(collapsedRun.durationSeconds)}</>}
-                              </small>
+                              {assistantDetails.length ? (
+                                <div className="message-author-stack">
+                                  <span>{author}</span>
+                                  <small>{assistantDetails.join(" · ")}</small>
+                                </div>
+                              ) : (
+                                <>
+                                  <span>{author}</span>
+                                  <small>
+                                    {new Date(message.createdAt).toLocaleString()}
+                                    {collapsedRun && <> · Работал {formatDuration(collapsedRun.durationSeconds)}</>}
+                                  </small>
+                                </>
+                              )}
                             </div>
                             {collapsedRun && renderCollapsedRunTrace(message, collapsedRun)}
                             {renderRichText(message.content, "rich-text message-body")}

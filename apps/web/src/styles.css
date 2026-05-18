@@ -1539,15 +1539,28 @@ h2 {
   justify-content: flex-start;
 }
 
+.message-author-stack {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
 .message-meta span {
   color: var(--text);
   font-weight: 800;
 }
 
-.message.assistant .message-meta small,
-.message.tool .message-meta small,
-.message.system .message-meta small {
+.message.assistant .message-meta > small,
+.message.tool .message-meta > small,
+.message.system .message-meta > small {
   margin-left: auto;
+}
+
+.message-author-stack small {
+  margin-left: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .message-thinking {

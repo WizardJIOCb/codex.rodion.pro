@@ -1926,6 +1926,7 @@ async function createApp(): Promise<FastifyInstance> {
         broadcast(parsed);
       }
       if (parsed.type === "job.done") {
+        const finishedAt = nowIso();
         db.prepare(`
           UPDATE jobs SET status=?, exit_code=?, final_message=?, git_status=?, git_diff_stat=?, git_diff=?, branch_name=?, codex_thread_id=?, finished_at=?
           WHERE id=?
@@ -1938,11 +1939,17 @@ async function createApp(): Promise<FastifyInstance> {
           parsed.gitDiff ?? null,
           parsed.branchName ?? null,
           parsed.codexThreadId ?? null,
-          nowIso(),
+          finishedAt,
           parsed.jobId
         );
         const job = db.prepare("SELECT * FROM jobs WHERE id = ?").get(parsed.jobId) as JobRow | undefined;
         if (job?.chat_id && parsed.finalMessage) {
+          const startedAt = job.started_at ?? job.created_at;
+          const startedAtMs = Date.parse(startedAt);
+          const finishedAtMs = Date.parse(finishedAt);
+          const durationSeconds = Number.isFinite(startedAtMs) && Number.isFinite(finishedAtMs)
+            ? Math.max(0, Math.floor((finishedAtMs - startedAtMs) / 1000))
+            : undefined;
           appendChatMessage({
             chat_id: job.chat_id,
             role: "assistant",
@@ -1954,9 +1961,15 @@ async function createApp(): Promise<FastifyInstance> {
               status: parsed.status,
               codexThreadId: parsed.codexThreadId,
               gitStatus: parsed.gitStatus,
-              gitDiffStat: parsed.gitDiffStat
+              gitDiffStat: parsed.gitDiffStat,
+              model: job.model,
+              reasoningEffort: job.reasoning_effort,
+              speed: job.speed,
+              startedAt,
+              finishedAt,
+              durationSeconds
             }),
-            created_at: nowIso()
+            created_at: finishedAt
           });
         }
         db.prepare("UPDATE agents SET current_job_id = NULL WHERE id = ?").run(agent.id);
