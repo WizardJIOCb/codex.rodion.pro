@@ -148,6 +148,7 @@ type AgentSetup = {
   setupPowerShell: string;
   setupBatch?: string;
   setupFileName?: string;
+  packageUrl?: string;
 };
 
 type DeployConfig = {
@@ -2772,7 +2773,7 @@ function App() {
     }
     setAgentSetup(setup);
     downloadTextFile(setup.setupFileName || "setup-agent.bat", setup.setupBatch || setup.setupPowerShell, "application/x-bat;charset=utf-8");
-    setSyncNotice("Скачал setup-agent.bat. Запусти его на домашнем Windows ПК после установки Git, Node.js LTS и Codex CLI.");
+    setSyncNotice("Скачал setup-agent.bat. Он скачает компактный agent-package.zip и запустит агента без клонирования репозитория.");
     await refresh();
   }
 
@@ -2984,7 +2985,7 @@ function App() {
           {agentSetup && (
             <div className="settings-card">
               <h2>Windows setup</h2>
-              <p>На ПК пользователя: установи Node.js LTS, Git, Codex CLI, выполни <code>codex login</code>, затем запусти скачанный <code>setup-agent.bat</code>.</p>
+              <p>На ПК пользователя: установи Node.js LTS и Codex CLI, выполни <code>codex login</code>, затем запусти скачанный <code>setup-agent.bat</code>. Он скачает только runtime-пакет агента.</p>
               <button className="secondary" type="button" onClick={() => (
                 downloadTextFile(agentSetup.setupFileName || "setup-agent.bat", agentSetup.setupBatch || agentSetup.setupPowerShell, "application/x-bat;charset=utf-8")
               )}>
@@ -3093,7 +3094,7 @@ function App() {
             <div>
               <h2><Download size={18} /> Windows agent setup</h2>
               <p>
-                Скачай персональный <code>setup-agent.bat</code>, запусти его на домашнем Windows ПК и дождись статуса online.
+                Скачай персональный <code>setup-agent.bat</code>, запусти его на домашнем Windows ПК и дождись статуса online. Репозиторий целиком он не клонирует.
                 Если файл потерян, кнопка выпустит новый токен для offline-агента.
               </p>
             </div>

@@ -4,7 +4,7 @@ cd /d "%~dp0"
 
 if not exist "data" mkdir "data"
 
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\prepare-vscode-bridge.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\prepare-vscode-bridge.ps1" -SkipBuild
 if errorlevel 1 (
   echo Failed to prepare VS Code bridge.
   pause

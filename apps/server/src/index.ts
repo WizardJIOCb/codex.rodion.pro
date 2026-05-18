@@ -1,6 +1,6 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import fastifyCookie from "@fastify/cookie";
 import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
@@ -1047,9 +1047,128 @@ function uniqueAgentId(preferred: string): string {
   return candidate;
 }
 
+type ZipEntry = {
+  path: string;
+  data: Buffer;
+};
+
+let crc32Table: Uint32Array | null = null;
+
+function crc32(data: Buffer): number {
+  if (!crc32Table) {
+    crc32Table = new Uint32Array(256);
+    for (let index = 0; index < 256; index += 1) {
+      let value = index;
+      for (let bit = 0; bit < 8; bit += 1) value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
+      crc32Table[index] = value >>> 0;
+    }
+  }
+  let crc = 0xffffffff;
+  for (const byte of data) crc = (crc >>> 8) ^ crc32Table[(crc ^ byte) & 0xff]!;
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function dosDateTime(date = new Date()): { time: number; date: number } {
+  const year = Math.max(1980, date.getFullYear());
+  return {
+    time: (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2),
+    date: ((year - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate()
+  };
+}
+
+function createStoredZip(entries: ZipEntry[]): Buffer {
+  const localParts: Buffer[] = [];
+  const centralParts: Buffer[] = [];
+  let offset = 0;
+  const stamp = dosDateTime();
+  for (const entry of entries) {
+    const name = Buffer.from(entry.path.replace(/\\/g, "/"), "utf8");
+    const checksum = crc32(entry.data);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(0x0800, 6);
+    local.writeUInt16LE(0, 8);
+    local.writeUInt16LE(stamp.time, 10);
+    local.writeUInt16LE(stamp.date, 12);
+    local.writeUInt32LE(checksum, 14);
+    local.writeUInt32LE(entry.data.length, 18);
+    local.writeUInt32LE(entry.data.length, 22);
+    local.writeUInt16LE(name.length, 26);
+    local.writeUInt16LE(0, 28);
+    localParts.push(local, name, entry.data);
+
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt16LE(0x0800, 8);
+    central.writeUInt16LE(0, 10);
+    central.writeUInt16LE(stamp.time, 12);
+    central.writeUInt16LE(stamp.date, 14);
+    central.writeUInt32LE(checksum, 16);
+    central.writeUInt32LE(entry.data.length, 20);
+    central.writeUInt32LE(entry.data.length, 24);
+    central.writeUInt16LE(name.length, 28);
+    central.writeUInt16LE(0, 30);
+    central.writeUInt16LE(0, 32);
+    central.writeUInt16LE(0, 34);
+    central.writeUInt16LE(0, 36);
+    central.writeUInt32LE(0, 38);
+    central.writeUInt32LE(offset, 42);
+    centralParts.push(central, name);
+    offset += local.length + name.length + entry.data.length;
+  }
+  const centralSize = centralParts.reduce((sum, part) => sum + part.length, 0);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(0, 4);
+  end.writeUInt16LE(0, 6);
+  end.writeUInt16LE(entries.length, 8);
+  end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(centralSize, 12);
+  end.writeUInt32LE(offset, 16);
+  end.writeUInt16LE(0, 20);
+  return Buffer.concat([...localParts, ...centralParts, end]);
+}
+
+function addFile(entries: ZipEntry[], from: string, to: string): void {
+  entries.push({ path: to, data: readFileSync(from) });
+}
+
+function addDir(entries: ZipEntry[], fromDir: string, toDir: string): void {
+  for (const name of readdirSync(fromDir)) {
+    const from = join(fromDir, name);
+    const to = `${toDir}/${name}`;
+    const stat = statSync(from);
+    if (stat.isDirectory()) addDir(entries, from, to);
+    if (stat.isFile()) addFile(entries, from, to);
+  }
+}
+
+function agentPackageZip(): Buffer {
+  const root = process.cwd();
+  const entries: ZipEntry[] = [];
+  addFile(entries, join(root, "package.json"), "package.json");
+  addFile(entries, join(root, "pnpm-lock.yaml"), "pnpm-lock.yaml");
+  addFile(entries, join(root, "pnpm-workspace.yaml"), "pnpm-workspace.yaml");
+  addFile(entries, join(root, "start-agent.bat"), "start-agent.bat");
+  addFile(entries, join(root, "stop-agent.bat"), "stop-agent.bat");
+  addFile(entries, join(root, "scripts", "run-agent.ps1"), "scripts/run-agent.ps1");
+  addFile(entries, join(root, "scripts", "prepare-vscode-bridge.ps1"), "scripts/prepare-vscode-bridge.ps1");
+  addFile(entries, join(root, "apps", "agent-windows", "package.json"), "apps/agent-windows/package.json");
+  addDir(entries, join(root, "apps", "agent-windows", "dist"), "apps/agent-windows/dist");
+  addFile(entries, join(root, "apps", "vscode-bridge", "package.json"), "apps/vscode-bridge/package.json");
+  addDir(entries, join(root, "apps", "vscode-bridge", "dist"), "apps/vscode-bridge/dist");
+  addFile(entries, join(root, "packages", "protocol", "package.json"), "packages/protocol/package.json");
+  addDir(entries, join(root, "packages", "protocol", "dist"), "packages/protocol/dist");
+  return createStoredZip(entries.sort((a, b) => a.path.localeCompare(b.path)));
+}
+
 function agentSetupPayload(request: { protocol: string; hostname: string }, agentId: string, token: string) {
   const origin = publicOrigin(request);
   const serverUrl = `${origin.replace(/^https:/, "wss:").replace(/^http:/, "ws:")}/api/agent/ws`;
+  const packageUrl = `${origin}/api/agent/package.zip`;
   const configJson = JSON.stringify({
     agentId,
     serverUrl,
@@ -1070,16 +1189,18 @@ function agentSetupPayload(request: { protocol: string; hostname: string }, agen
   const encodedConfig = Buffer.from(configJson, "utf8").toString("base64");
   const setupPowerShell = [
     "$ErrorActionPreference = \"Stop\"",
-    "$Root = Join-Path $env:USERPROFILE \"codex.rodion.pro\"",
-    "if (-not (Get-Command git.exe -ErrorAction SilentlyContinue)) { throw \"Install Git for Windows first.\" }",
+    "$Root = Join-Path $env:USERPROFILE \"codex-agent\"",
+    `$PackageUrl = "${packageUrl}"`,
     "if (-not (Get-Command node.exe -ErrorAction SilentlyContinue)) { throw \"Install Node.js LTS first.\" }",
     "if (-not (Get-Command codex.cmd -ErrorAction SilentlyContinue)) { throw \"Install Codex CLI and run: codex login\" }",
-    "if (-not (Test-Path $Root)) { git clone https://github.com/WizardJIOCb/codex.rodion.pro.git $Root }",
-    "elseif (-not (Test-Path (Join-Path $Root \".git\"))) { throw \"$Root exists but is not a codex.rodion.pro checkout.\" }",
+    "New-Item -ItemType Directory -Force -Path $Root | Out-Null",
+    "$Zip = Join-Path $Root \"agent-package.zip\"",
+    "Invoke-WebRequest -Uri $PackageUrl -OutFile $Zip",
+    "Expand-Archive -Path $Zip -DestinationPath $Root -Force",
+    "Remove-Item -LiteralPath $Zip -Force",
     "Set-Location $Root",
     "corepack enable",
-    "corepack pnpm install",
-    "corepack pnpm build",
+    "corepack pnpm install --prod --frozen-lockfile",
     `[Environment]::SetEnvironmentVariable("CMC_AGENT_TOKEN", "${token}", "User")`,
     `$config = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("${encodedConfig}"))`,
     "$config | Set-Content -Path \"apps/agent-windows/agent.config.json\" -Encoding UTF8",
@@ -1088,22 +1209,25 @@ function agentSetupPayload(request: { protocol: string; hostname: string }, agen
   const setupBatch = [
     "@echo off",
     "setlocal",
-    "set \"CODEX_AGENT_ROOT=%USERPROFILE%\\codex.rodion.pro\"",
+    "set \"CODEX_AGENT_ROOT=%USERPROFILE%\\codex-agent\"",
+    `set "CODEX_AGENT_PACKAGE_URL=${packageUrl}"`,
     `set "CODEX_AGENT_TOKEN=${token}"`,
     `set "CODEX_AGENT_CONFIG_B64=${encodedConfig}"`,
     "",
     "powershell -NoProfile -ExecutionPolicy Bypass -Command ^",
     "  \"$ErrorActionPreference='Stop'; \" ^",
     "  \"$root=$env:CODEX_AGENT_ROOT; \" ^",
-    "  \"if (-not (Get-Command git.exe -ErrorAction SilentlyContinue)) { throw 'Install Git for Windows first.' }; \" ^",
+    "  \"$packageUrl=$env:CODEX_AGENT_PACKAGE_URL; \" ^",
     "  \"if (-not (Get-Command node.exe -ErrorAction SilentlyContinue)) { throw 'Install Node.js LTS first.' }; \" ^",
     "  \"if (-not (Get-Command codex.cmd -ErrorAction SilentlyContinue)) { throw 'Install Codex CLI and run: codex login' }; \" ^",
-    "  \"if (-not (Test-Path $root)) { git clone https://github.com/WizardJIOCb/codex.rodion.pro.git $root }; \" ^",
-    "  \"if (-not (Test-Path (Join-Path $root '.git'))) { throw ($root + ' exists but is not a codex.rodion.pro checkout.') }; \" ^",
+    "  \"New-Item -ItemType Directory -Force -Path $root | Out-Null; \" ^",
+    "  \"$zip=Join-Path $root 'agent-package.zip'; \" ^",
+    "  \"Invoke-WebRequest -Uri $packageUrl -OutFile $zip; \" ^",
+    "  \"Expand-Archive -Path $zip -DestinationPath $root -Force; \" ^",
+    "  \"Remove-Item -LiteralPath $zip -Force; \" ^",
     "  \"Set-Location $root; \" ^",
     "  \"corepack enable; \" ^",
-    "  \"corepack pnpm install; \" ^",
-    "  \"corepack pnpm build; \" ^",
+    "  \"corepack pnpm install --prod --frozen-lockfile; \" ^",
     "  \"[Environment]::SetEnvironmentVariable('CMC_AGENT_TOKEN',$env:CODEX_AGENT_TOKEN,'User'); \" ^",
     "  \"$config=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:CODEX_AGENT_CONFIG_B64)); \" ^",
     "  \"$config | Set-Content -Path (Join-Path $root 'apps\\agent-windows\\agent.config.json') -Encoding UTF8; \" ^",
@@ -1112,7 +1236,7 @@ function agentSetupPayload(request: { protocol: string; hostname: string }, agen
     "pause",
     "exit /b %CODEX_AGENT_SETUP_EXIT%"
   ].join("\r\n");
-  return { agentId, serverUrl, token, configJson, setupPowerShell, setupBatch, setupFileName: "setup-agent.bat" };
+  return { agentId, serverUrl, token, configJson, setupPowerShell, setupBatch, setupFileName: "setup-agent.bat", packageUrl };
 }
 
 async function tokenRequest(url: string, params: Record<string, string>, headers: Record<string, string> = {}): Promise<Record<string, unknown>> {
@@ -1481,6 +1605,19 @@ async function createApp(): Promise<FastifyInstance> {
     db.prepare("INSERT INTO users (id,email,password_hash,role,created_at) VALUES (?,?,?,?,?)")
       .run(userId, email, await hashSecret(parsed.data.password), parsed.data.role, nowIso());
     return reply.code(201).send({ user: { id: userId, email, role: parsed.data.role } });
+  });
+
+  app.get("/api/agent/package.zip", async (_request, reply) => {
+    try {
+      const zip = agentPackageZip();
+      return reply
+        .header("content-type", "application/zip")
+        .header("content-disposition", "attachment; filename=\"codex-agent-package.zip\"")
+        .header("cache-control", "no-store")
+        .send(zip);
+    } catch (error) {
+      return reply.code(500).send({ error: "agent_package_unavailable", message: error instanceof Error ? error.message : String(error) });
+    }
   });
 
   app.post("/api/agents", async (request, reply) => {
