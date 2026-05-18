@@ -287,9 +287,10 @@ type CodexAction = {
 };
 
 type CollapsedRunSummary = {
-  job: Job;
+  job?: Job;
   messages: ChatMessage[];
   commandCount: number;
+  durationSeconds: number;
 };
 
 type ChatTimelineItem = {
@@ -751,6 +752,10 @@ function shouldCollapseRunMessage(message: ChatMessage, jobId: string) {
   return message.role === "assistant" || message.role === "tool";
 }
 
+function shouldCollapseCompletedTurnMessage(message: ChatMessage) {
+  return message.role === "assistant" || message.role === "tool";
+}
+
 const CHAT_TOP_THRESHOLD_PX = 120;
 const CHAT_BOTTOM_THRESHOLD_PX = 16;
 
@@ -827,9 +832,30 @@ function metadataCodexActions(message: ChatMessage): CodexAction[] {
   });
 }
 
-function buildChatTimeline(messages: ChatMessage[], jobs: Job[]): ChatTimelineItem[] {
+function buildChatTimeline(messages: ChatMessage[], jobs: Job[], keepLatestTurnExpanded = false): ChatTimelineItem[] {
   const hiddenMessageIds = new Set<string>();
   const collapsedByFinalId = new Map<string, CollapsedRunSummary>();
+  const collapseMessages = (finalMessage: ChatMessage, collapsedMessages: ChatMessage[], job?: Job) => {
+    const nextMessages = collapsedMessages.filter((message) => !hiddenMessageIds.has(message.id));
+    if (!nextMessages.length) return;
+    nextMessages.forEach((message) => hiddenMessageIds.add(message.id));
+    const existing = collapsedByFinalId.get(finalMessage.id);
+    const mergedMessages = existing ? [...existing.messages, ...nextMessages] : nextMessages;
+    const uniqueMessages = [...new Map(mergedMessages.map((message) => [message.id, message])).values()]
+      .sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt));
+    const firstStepAt = Date.parse(uniqueMessages[0]?.createdAt ?? finalMessage.createdAt);
+    const finalAt = Date.parse(finalMessage.createdAt);
+    collapsedByFinalId.set(finalMessage.id, {
+      job: job ?? existing?.job,
+      messages: uniqueMessages,
+      commandCount: uniqueMessages.reduce((total, message) => total + metadataCodexActions(message).length, 0),
+      durationSeconds: job
+        ? jobDurationSeconds(job)
+        : Number.isFinite(firstStepAt) && Number.isFinite(finalAt)
+          ? Math.max(0, Math.floor((finalAt - firstStepAt) / 1000))
+          : existing?.durationSeconds ?? 0
+    });
+  };
   const completedJobs = jobs
     .filter(isJobFinished)
     .slice()
@@ -845,13 +871,23 @@ function buildChatTimeline(messages: ChatMessage[], jobs: Job[]): ChatTimelineIt
       .slice(from, finalIndex)
       .filter((message) => shouldCollapseRunMessage(message, job.id))
       .filter((message) => !hiddenMessageIds.has(message.id));
-    if (!collapsedMessages.length) continue;
-    collapsedMessages.forEach((message) => hiddenMessageIds.add(message.id));
-    collapsedByFinalId.set(messages[finalIndex]!.id, {
-      job,
-      messages: collapsedMessages,
-      commandCount: collapsedMessages.reduce((total, message) => total + metadataCodexActions(message).length, 0)
-    });
+    collapseMessages(messages[finalIndex]!, collapsedMessages, job);
+  }
+
+  for (let index = 0; index < messages.length; index += 1) {
+    if (messages[index]?.role !== "user") continue;
+    const nextUserIndex = messages.findIndex((message, nextIndex) => nextIndex > index && message.role === "user");
+    const segmentEnd = nextUserIndex >= 0 ? nextUserIndex : messages.length;
+    if (keepLatestTurnExpanded && segmentEnd === messages.length) continue;
+    const segment = messages.slice(index + 1, segmentEnd).filter((message) => !hiddenMessageIds.has(message.id));
+    const finalMessage = segment.slice().reverse().find((message) => message.role === "assistant");
+    if (!finalMessage || collapsedByFinalId.has(finalMessage.id)) continue;
+    const finalIndex = messages.findIndex((message) => message.id === finalMessage.id);
+    const collapsedMessages = messages
+      .slice(index + 1, finalIndex)
+      .filter((message) => !hiddenMessageIds.has(message.id))
+      .filter(shouldCollapseCompletedTurnMessage);
+    collapseMessages(finalMessage, collapsedMessages);
   }
 
   return messages
@@ -1115,7 +1151,7 @@ function App() {
     at: new Date().toISOString()
   } : null;
   const firstActiveProgressFile = activeProgress?.files?.[0];
-  const timelineItems = useMemo(() => buildChatTimeline(messages, jobs), [messages, jobs]);
+  const timelineItems = useMemo(() => buildChatTimeline(messages, jobs, localCodexBusy || activeRunBusy), [messages, jobs, localCodexBusy, activeRunBusy]);
 
   function isScrollableElement(element: HTMLElement | null | undefined): element is HTMLElement {
     if (!element || element.scrollHeight <= element.clientHeight + 1) return false;
@@ -2463,7 +2499,7 @@ function App() {
   function renderCollapsedRunTrace(finalMessage: ChatMessage, summary: CollapsedRunSummary) {
     const actionKey = `runtrace:${finalMessage.id}`;
     const expanded = Boolean(expandedActions[actionKey]);
-    const durationSeconds = jobDurationSeconds(summary.job);
+    const durationSeconds = summary.durationSeconds;
     const updateCount = summary.messages.length;
     return (
       <div className="run-trace">
@@ -3009,7 +3045,7 @@ function App() {
                               <span>{message.role === "user" ? "You" : message.source === "vscode" ? "VS Code" : "Codex"}</span>
                               <small>
                                 {new Date(message.createdAt).toLocaleString()}
-                                {collapsedRun && <> · Работал {formatDuration(jobDurationSeconds(collapsedRun.job))}</>}
+                                {collapsedRun && <> · Работал {formatDuration(collapsedRun.durationSeconds)}</>}
                               </small>
                             </div>
                             {collapsedRun && renderCollapsedRunTrace(message, collapsedRun)}
