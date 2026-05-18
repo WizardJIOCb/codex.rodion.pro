@@ -1817,6 +1817,32 @@ function App() {
   }, [activeChatId, messages.length, selectedRepo?.id, view]);
 
   useEffect(() => {
+    if (!activeChat) {
+      setShowChatScrollTop(false);
+      setShowChatScrollBottom(false);
+      return;
+    }
+
+    const update = () => updateChatBottomState();
+    const timers = [
+      window.setTimeout(update, 80),
+      window.setTimeout(update, 260)
+    ];
+    const raf = window.requestAnimationFrame(update);
+    const observer = new ResizeObserver(() => update());
+    const scroller = getChatScroller();
+    [scroller, shellRef.current, chatThreadRef.current]
+      .filter((element, index, list): element is HTMLElement => Boolean(element) && list.indexOf(element) === index)
+      .forEach((element) => observer.observe(element));
+
+    return () => {
+      window.cancelAnimationFrame(raf);
+      timers.forEach((timer) => window.clearTimeout(timer));
+      observer.disconnect();
+    };
+  }, [activeChat, activeChatId, chatIsLoading, timelineItems.length, messages.length, jobs.length, view]);
+
+  useEffect(() => {
     const now = Date.now();
     if (rawLocalCodexBusy) {
       const detectedAt = localActivity?.busySinceAt || localActivity?.updatedAt || localActivity?.detectedAt || new Date(now).toISOString();
