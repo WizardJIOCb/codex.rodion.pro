@@ -1070,6 +1070,12 @@ textarea:focus {
   overflow: auto;
 }
 
+.sandbox-menu {
+  left: auto;
+  right: 0;
+  width: min(220px, calc(100vw - 28px));
+}
+
 .sticky-submit .sandbox-menu button,
 .sticky-submit .action-menu button {
   width: 100%;
@@ -1087,6 +1093,26 @@ textarea:focus {
 .sticky-submit .action-menu button:hover,
 .sticky-submit .action-menu button.selected {
   background: var(--panel-2);
+}
+
+.sticky-submit .sandbox-menu button {
+  min-height: 32px;
+  padding: 6px 8px;
+  gap: 8px;
+  justify-content: space-between;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.sticky-submit .sandbox-menu button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sticky-submit .sandbox-menu button svg {
+  flex: 0 0 auto;
 }
 
 .sticky-submit .action-menu button {
