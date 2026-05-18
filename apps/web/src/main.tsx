@@ -2794,8 +2794,8 @@ function App() {
   function renderCollapsedRunTrace(finalMessage: ChatMessage, summary: CollapsedRunSummary) {
     const actionKey = `runtrace:${finalMessage.id}`;
     const expanded = Boolean(expandedActions[actionKey]);
-    const durationSeconds = summary.durationSeconds;
     const updateCount = summary.messages.length;
+    const traceLabel = `${updateCount} шагов${summary.commandCount ? ` · ${summary.commandCount} команд` : ""}`;
     return (
       <div className="run-trace">
         <button
@@ -2803,8 +2803,7 @@ function App() {
           onClick={() => setExpandedActions((current) => ({ ...current, [actionKey]: !current[actionKey] }))}
         >
           <Clock3 size={15} />
-          <span>Работал {formatDuration(durationSeconds)}</span>
-          <small>{updateCount} шагов{summary.commandCount ? ` · ${summary.commandCount} команд` : ""}</small>
+          <span>{traceLabel}</span>
           <ChevronDown className={expanded ? "open" : ""} size={15} />
         </button>
         {expanded && (
