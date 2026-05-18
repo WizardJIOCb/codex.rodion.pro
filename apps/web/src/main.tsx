@@ -1298,7 +1298,7 @@ function App() {
     const composer = composerRef.current;
     if (!composer) return;
     const height = Math.ceil(composer.getBoundingClientRect().height);
-    document.documentElement.style.setProperty("--composer-space", `${height + 24}px`);
+    document.documentElement.style.setProperty("--composer-space", `${height + 12}px`);
   }
 
   async function refresh() {

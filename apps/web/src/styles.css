@@ -972,7 +972,7 @@ textarea:focus {
 
 .composer {
   position: sticky;
-  bottom: max(10px, env(safe-area-inset-bottom));
+  bottom: 0;
   z-index: 25;
   padding: 12px;
   overflow: visible;
