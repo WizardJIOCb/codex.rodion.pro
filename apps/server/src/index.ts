@@ -422,7 +422,7 @@ function requestAgentVscode(
     const timer = setTimeout(() => {
       vscodeRequests.delete(message.requestId);
       reject(new Error("agent_timeout"));
-    }, 15000);
+    }, 30000);
     vscodeRequests.set(message.requestId, { resolve, reject, timer });
     agent.send(message);
   });

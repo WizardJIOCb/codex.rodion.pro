@@ -612,14 +612,27 @@ function connect() {
     }
 
     if (message.type === "vscode.command") {
-      const result = await sendVscodeBridgeCommand(message);
-      send({
-        type: "vscode.result",
-        requestId: message.requestId,
-        ok: result.ok,
-        output: result.output,
-        error: result.error
-      });
+      console.log(`VS Code command requested: ${message.command}`);
+      try {
+        const result = await sendVscodeBridgeCommand(message);
+        console.log(`VS Code command result: ${message.command} ${result.ok ? "ok" : result.error ?? "failed"}`);
+        send({
+          type: "vscode.result",
+          requestId: message.requestId,
+          ok: result.ok,
+          output: result.output,
+          error: result.error
+        });
+      } catch (error) {
+        const messageText = error instanceof Error ? error.message : String(error);
+        console.error(`VS Code command failed: ${message.command}: ${messageText}`);
+        send({
+          type: "vscode.result",
+          requestId: message.requestId,
+          ok: false,
+          error: messageText
+        });
+      }
       return;
     }
 
