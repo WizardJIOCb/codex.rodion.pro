@@ -286,6 +286,17 @@ type CodexAction = {
   at: string;
 };
 
+type CollapsedRunSummary = {
+  job: Job;
+  messages: ChatMessage[];
+  commandCount: number;
+};
+
+type ChatTimelineItem = {
+  message: ChatMessage;
+  collapsedRun?: CollapsedRunSummary;
+};
+
 function api(path: string, options: RequestInit = {}) {
   return fetch(path, {
     ...options,
@@ -711,6 +722,27 @@ function messageJobId(message: ChatMessage) {
   return metadataJobId || message.externalId?.match(/^job:([^:]+):/)?.[1] || "";
 }
 
+function isJobFinished(job: Job) {
+  return Boolean(job.finishedAt && !["queued", "assigned", "running"].includes(job.status));
+}
+
+function isJobPromptMessage(message: ChatMessage, jobId: string) {
+  return message.externalId === `job:${jobId}:prompt` || (message.role === "user" && messageJobId(message) === jobId);
+}
+
+function isJobFinalMessage(message: ChatMessage, jobId: string) {
+  return message.externalId === `job:${jobId}:final` || (
+    message.role === "assistant"
+    && messageJobId(message) === jobId
+    && typeof message.metadata?.status === "string"
+  );
+}
+
+function shouldCollapseRunMessage(message: ChatMessage, jobId: string) {
+  if (isJobFinalMessage(message, jobId) || isJobPromptMessage(message, jobId)) return false;
+  return message.role === "assistant" || message.role === "tool";
+}
+
 function displayLogMessage(log: Log) {
   const rawText = log.message.trim();
   if (!rawText) return null;
@@ -782,6 +814,41 @@ function metadataCodexActions(message: ChatMessage): CodexAction[] {
       at: typeof value.at === "string" ? value.at : message.createdAt
     }];
   });
+}
+
+function buildChatTimeline(messages: ChatMessage[], jobs: Job[]): ChatTimelineItem[] {
+  const hiddenMessageIds = new Set<string>();
+  const collapsedByFinalId = new Map<string, CollapsedRunSummary>();
+  const completedJobs = jobs
+    .filter(isJobFinished)
+    .slice()
+    .sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt));
+
+  for (const job of completedJobs) {
+    const promptIndex = messages.findIndex((message) => isJobPromptMessage(message, job.id));
+    const finalIndex = messages.findIndex((message) => isJobFinalMessage(message, job.id));
+    if (finalIndex < 0) continue;
+    const startIndex = promptIndex >= 0 ? promptIndex : messages.findIndex((message) => Date.parse(message.createdAt) >= Date.parse(job.createdAt));
+    const from = startIndex >= 0 ? startIndex + 1 : 0;
+    const collapsedMessages = messages
+      .slice(from, finalIndex)
+      .filter((message) => shouldCollapseRunMessage(message, job.id))
+      .filter((message) => !hiddenMessageIds.has(message.id));
+    if (!collapsedMessages.length) continue;
+    collapsedMessages.forEach((message) => hiddenMessageIds.add(message.id));
+    collapsedByFinalId.set(messages[finalIndex]!.id, {
+      job,
+      messages: collapsedMessages,
+      commandCount: collapsedMessages.reduce((total, message) => total + metadataCodexActions(message).length, 0)
+    });
+  }
+
+  return messages
+    .filter((message) => !hiddenMessageIds.has(message.id))
+    .map((message) => ({
+      message,
+      collapsedRun: collapsedByFinalId.get(message.id)
+    }));
 }
 
 function messageUpdateSignature(message: ChatMessage) {
@@ -978,6 +1045,7 @@ function App() {
     at: new Date().toISOString()
   } : null;
   const firstActiveProgressFile = activeProgress?.files?.[0];
+  const timelineItems = useMemo(() => buildChatTimeline(messages, jobs), [messages, jobs]);
 
   function getChatScroller() {
     const shell = shellRef.current;
@@ -2263,6 +2331,47 @@ function App() {
     );
   }
 
+  function renderCollapsedRunTrace(finalMessage: ChatMessage, summary: CollapsedRunSummary) {
+    const actionKey = `runtrace:${finalMessage.id}`;
+    const expanded = Boolean(expandedActions[actionKey]);
+    const durationSeconds = jobDurationSeconds(summary.job);
+    const updateCount = summary.messages.length;
+    return (
+      <div className="run-trace">
+        <button
+          type="button"
+          onClick={() => setExpandedActions((current) => ({ ...current, [actionKey]: !current[actionKey] }))}
+        >
+          <Clock3 size={15} />
+          <span>Работал {formatDuration(durationSeconds)}</span>
+          <small>{updateCount} шагов{summary.commandCount ? ` · ${summary.commandCount} команд` : ""}</small>
+          <ChevronDown className={expanded ? "open" : ""} size={15} />
+        </button>
+        {expanded && (
+          <div className="run-trace-details">
+            {summary.messages.map((message, index) => {
+              const jobId = messageJobId(message);
+              const messageJob = jobId ? jobs.find((job) => job.id === jobId) ?? summary.job : summary.job;
+              const messageProgress = messageJob ? progressByJob[messageJob.id] ?? null : null;
+              return (
+                <article className="run-trace-step" key={message.id}>
+                  <div className="message-meta">
+                    <span>Шаг {index + 1}</span>
+                    <small>{new Date(message.createdAt).toLocaleString()}</small>
+                  </div>
+                  {renderRichText(message.content, "rich-text message-body")}
+                  {renderMessageAttachments(message.attachments, setImagePreview)}
+                  {renderCodexActions(message, messageJob)}
+                  {renderCodexChangeCard(message, messageJob, messageProgress)}
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   function renderComposer() {
     if (!selectedRepo) return null;
     const canSubmit = Boolean(prompt.trim() || attachments.length);
@@ -2732,13 +2841,14 @@ function App() {
                 <section className="workspace">
                   <section className="job-detail">
                     <section className="chat-thread" ref={chatThreadRef}>
-                      {messages.length ? messages.map((message, index) => {
+                      {timelineItems.length ? timelineItems.map((item, index) => {
+                        const { message, collapsedRun } = item;
                         const jobId = messageJobId(message);
                         const messageJob = jobs.find((job) => job.id === jobId);
                         const messageProgress = jobId ? progressByJob[jobId] ?? null : null;
                         const isNew = highlightedMessageIds.has(message.id);
                         const isFirst = index === 0;
-                        const isLast = index === messages.length - 1;
+                        const isLast = index === timelineItems.length - 1;
                         return (
                           <article
                             className={`message ${message.role}${isNew ? " new-message" : ""}`}
@@ -2750,8 +2860,12 @@ function App() {
                           >
                             <div className="message-meta">
                               <span>{message.role === "user" ? "You" : message.source === "vscode" ? "VS Code" : "Codex"}</span>
-                              <small>{new Date(message.createdAt).toLocaleString()}</small>
+                              <small>
+                                {new Date(message.createdAt).toLocaleString()}
+                                {collapsedRun && <> · Работал {formatDuration(jobDurationSeconds(collapsedRun.job))}</>}
+                              </small>
                             </div>
+                            {collapsedRun && renderCollapsedRunTrace(message, collapsedRun)}
                             {renderRichText(message.content, "rich-text message-body")}
                             {renderMessageAttachments(message.attachments, setImagePreview)}
                             {jobId === activeJob?.id && activeRunBusy && (

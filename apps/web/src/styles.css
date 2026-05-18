@@ -1488,6 +1488,60 @@ h2 {
   transform: rotate(180deg);
 }
 
+.run-trace {
+  display: grid;
+  gap: 8px;
+  width: min(720px, 100%);
+}
+
+.run-trace > button {
+  width: fit-content;
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  background: #fbfbfa;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.run-trace > button small {
+  color: var(--soft);
+  font-weight: 750;
+}
+
+.run-trace .open {
+  transform: rotate(180deg);
+}
+
+.run-trace-details {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfbfa;
+}
+
+.run-trace-step {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #ffffff;
+}
+
+.run-trace-step .codex-change-card {
+  width: 100%;
+}
+
 .command-details {
   gap: 6px;
 }
