@@ -1151,7 +1151,6 @@ function App() {
     : "";
   const localBusyChatTitle = localCodexBusy ? localActivity?.chatTitle : undefined;
   const localBusyFallbackChatId = localCodexBusy
-    && localActivity?.source === "codex.rodion.pro"
     && localBusyRepoKey === `${selectedRepo?.agentId ?? ""}:${selectedRepo?.id ?? ""}`
     ? activeJob?.chatId ?? activeChatId
     : "";
