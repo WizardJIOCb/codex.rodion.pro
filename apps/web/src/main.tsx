@@ -2946,20 +2946,6 @@ function App() {
                       )}
                     </section>
                     {renderComposer()}
-                    {(showChatScrollTop || showChatScrollBottom) && (
-                      <div className="chat-scroll-controls" aria-label="Прокрутка чата">
-                        {showChatScrollTop && (
-                          <button className="scroll-up" type="button" onClick={() => scrollChatToTop("smooth")} title="К началу чата">
-                            <ArrowUp size={18} />
-                          </button>
-                        )}
-                        {showChatScrollBottom && (
-                          <button className={`scroll-down ${showJumpToLatest ? "has-new" : ""}`} type="button" onClick={() => scrollChatToLatest("smooth")} title="К последним сообщениям">
-                            <ArrowDown size={18} />
-                          </button>
-                        )}
-                      </div>
-                    )}
                     {activeJob && activeRunBusy ? (
                       <>
                         <div className="job-head">
@@ -3028,6 +3014,21 @@ function App() {
         </section>
       )}
       </section>
+
+      {activeChat && (showChatScrollTop || showChatScrollBottom) && (
+        <div className="chat-scroll-controls" aria-label="Прокрутка чата">
+          {showChatScrollTop && (
+            <button className="scroll-up" type="button" onClick={() => scrollChatToTop("smooth")} title="К началу чата">
+              <ArrowUp size={18} />
+            </button>
+          )}
+          {showChatScrollBottom && (
+            <button className={`scroll-down ${showJumpToLatest ? "has-new" : ""}`} type="button" onClick={() => scrollChatToLatest("smooth")} title="К последним сообщениям">
+              <ArrowDown size={18} />
+            </button>
+          )}
+        </div>
+      )}
 
       <aside className="agent-console">
         <section className="agent-card">
