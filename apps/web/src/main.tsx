@@ -1097,11 +1097,24 @@ function App() {
   const firstActiveProgressFile = activeProgress?.files?.[0];
   const timelineItems = useMemo(() => buildChatTimeline(messages, jobs), [messages, jobs]);
 
-  function getChatScroller() {
+  function isScrollableElement(element: HTMLElement | null | undefined): element is HTMLElement {
+    if (!element || element.scrollHeight <= element.clientHeight + 1) return false;
+    const overflowY = getComputedStyle(element).overflowY;
+    return overflowY !== "visible" && overflowY !== "clip";
+  }
+
+  function getChatScroller(): HTMLElement {
     const shell = shellRef.current;
-    if (shell && shell.scrollHeight > shell.clientHeight + 1 && getComputedStyle(shell).overflowY !== "visible") {
-      return shell;
-    }
+    if (isScrollableElement(shell)) return shell;
+
+    const root = document.getElementById("root");
+    if (isScrollableElement(root)) return root;
+
+    const scrollingElement = document.scrollingElement as HTMLElement | null;
+    if (isScrollableElement(scrollingElement)) return scrollingElement;
+
+    if (isScrollableElement(document.body)) return document.body;
+
     return (document.scrollingElement || document.documentElement) as HTMLElement;
   }
 
@@ -1542,10 +1555,15 @@ function App() {
 
   useEffect(() => {
     const update = () => updateChatBottomState();
+    const scroller = getChatScroller();
+    if (scroller !== document.documentElement && scroller !== document.body) {
+      scroller.addEventListener("scroll", update, { passive: true });
+    }
     window.addEventListener("scroll", update, { passive: true });
     window.addEventListener("resize", update);
     window.requestAnimationFrame(update);
     return () => {
+      scroller.removeEventListener("scroll", update);
       window.removeEventListener("scroll", update);
       window.removeEventListener("resize", update);
     };
