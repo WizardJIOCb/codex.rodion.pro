@@ -538,17 +538,18 @@ textarea:focus {
   align-content: start;
   gap: 10px;
   height: calc(100dvh - 20px);
+  padding-top: 2px;
   overflow: auto;
   scrollbar-gutter: stable;
 }
 
 .topbar {
-  min-height: 54px;
+  min-height: 64px;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
-  padding: 10px 12px;
+  padding: 9px 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.9);
@@ -564,7 +565,7 @@ textarea:focus {
   min-width: 0;
   display: grid;
   justify-items: center;
-  gap: 2px;
+  gap: 1px;
   text-align: center;
 }
 
@@ -1420,20 +1421,16 @@ h2 {
 .chat-thread {
   position: relative;
   display: grid;
-  gap: 8px;
+  gap: 18px;
   min-width: 0;
-  padding: 10px;
+  padding: 12px 18px;
 }
 
 .message {
   position: relative;
   display: grid;
-  gap: 6px;
+  gap: 8px;
   max-width: min(850px, 100%);
-  padding: 10px 12px;
-  border-radius: 8px;
-  border: 1px solid var(--line);
-  background: #ffffff;
 }
 
 .message.new-message {
@@ -1509,6 +1506,9 @@ h2 {
 
 .message.user {
   justify-self: end;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
   background: #f4f4f0;
 }
 
@@ -1516,6 +1516,12 @@ h2 {
 .message.tool,
 .message.system {
   justify-self: start;
+  width: min(850px, 100%);
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
 }
 
 .message-meta {
@@ -1526,9 +1532,21 @@ h2 {
   font-size: 12px;
 }
 
+.message.assistant .message-meta,
+.message.tool .message-meta,
+.message.system .message-meta {
+  justify-content: flex-start;
+}
+
 .message-meta span {
   color: var(--text);
   font-weight: 800;
+}
+
+.message.assistant .message-meta small,
+.message.tool .message-meta small,
+.message.system .message-meta small {
+  margin-left: auto;
 }
 
 .message-thinking {
