@@ -726,6 +726,10 @@ function isJobFinished(job: Job) {
   return Boolean(job.finishedAt && !["queued", "assigned", "running"].includes(job.status));
 }
 
+function isJobRunning(job: Job) {
+  return ["queued", "assigned", "running"].includes(job.status);
+}
+
 function isJobPromptMessage(message: ChatMessage, jobId: string) {
   return message.externalId === `job:${jobId}:prompt` || (message.role === "user" && messageJobId(message) === jobId);
 }
@@ -742,6 +746,9 @@ function shouldCollapseRunMessage(message: ChatMessage, jobId: string) {
   if (isJobFinalMessage(message, jobId) || isJobPromptMessage(message, jobId)) return false;
   return message.role === "assistant" || message.role === "tool";
 }
+
+const CHAT_TOP_THRESHOLD_PX = 120;
+const CHAT_BOTTOM_THRESHOLD_PX = 16;
 
 function displayLogMessage(log: Log) {
   const rawText = log.message.trim();
@@ -851,6 +858,12 @@ function buildChatTimeline(messages: ChatMessage[], jobs: Job[]): ChatTimelineIt
     }));
 }
 
+function mergeJobs(current: Job[], incoming: Job[]) {
+  const byId = new Map(current.map((job) => [job.id, job]));
+  incoming.forEach((job) => byId.set(job.id, job));
+  return [...byId.values()].sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
+}
+
 function messageUpdateSignature(message: ChatMessage) {
   const actionCount = Array.isArray(message.metadata?.codexActions) ? message.metadata.codexActions.length : 0;
   const changeStat = typeof message.metadata?.gitDiffStat === "string" ? message.metadata.gitDiffStat.length : 0;
@@ -900,6 +913,7 @@ function App() {
   const [repos, setRepos] = useState<Repo[]>([]);
   const [chats, setChats] = useState<Chat[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [allJobs, setAllJobs] = useState<Job[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [activeJob, setActiveJob] = useState<Job | null>(null);
   const [logs, setLogs] = useState<Log[]>([]);
@@ -993,6 +1007,8 @@ function App() {
     .filter(Number.isFinite));
   const localActivityUpdatedAt = Date.parse(localActivity?.updatedAt || "");
   const localFinalMessageLikelySeen = Boolean(
+    (!localActivity?.repoId || selectedRepo?.id === localActivity.repoId)
+    &&
     latestLocalAssistantMessageAt
     && Number.isFinite(localActivityUpdatedAt)
     && latestLocalAssistantMessageAt >= localActivityUpdatedAt - 1000
@@ -1014,13 +1030,30 @@ function App() {
       ? localBusySince
       : undefined;
   const thinkingSeconds = thinkingSince ? Math.max(0, Math.floor((nowTick - Date.parse(thinkingSince)) / 1000)) : 0;
-  const thinkingChatId = activeRunBusy ? activeJob?.chatId : localCodexBusy ? activeChatId : undefined;
+  const runningJobs = useMemo(() => mergeJobs(allJobs, activeJob && activeRunBusy ? [activeJob] : []).filter(isJobRunning), [allJobs, activeJob, activeRunBusy]);
+  const busyChatIds = useMemo(() => new Set(runningJobs.map((job) => job.chatId).filter((chatId): chatId is string => Boolean(chatId))), [runningJobs]);
+  const localBusyRepoKey = localCodexBusy && localActivity?.repoId && selectedAgent?.id
+    ? `${selectedAgent.id}:${localActivity.repoId}`
+    : "";
+  const localBusyChatTitle = localCodexBusy && localActivity?.source !== "codex.rodion.pro" ? localActivity?.chatTitle : undefined;
+  const busyCountByRepo = useMemo(() => {
+    const counts = new Map<string, Set<string>>();
+    const addBusy = (repoKeyValue: string, busyKey: string) => {
+      const current = counts.get(repoKeyValue) ?? new Set<string>();
+      current.add(busyKey);
+      counts.set(repoKeyValue, current);
+    };
+    runningJobs.forEach((job) => addBusy(`${job.agentId}:${job.repoId}`, job.chatId ? `chat:${job.chatId}` : `job:${job.id}`));
+    if (localBusyRepoKey && localActivity?.source !== "codex.rodion.pro") addBusy(localBusyRepoKey, `local:${localActivity?.chatTitle ?? "codex"}`);
+    return new Map([...counts.entries()].map(([key, value]) => [key, value.size]));
+  }, [localBusyRepoKey, localActivity?.chatTitle, localActivity?.source, runningJobs]);
   const activeChatIdRef = useRef(activeChatId);
   const activeJobIdRef = useRef(activeJob?.id ?? "");
   const selectedRepoRef = useRef<Repo | undefined>(selectedRepo);
   const loadChatsTimerRef = useRef<number | undefined>(undefined);
   const loadChatTimerRef = useRef<number | undefined>(undefined);
   const loadJobTimerRef = useRef<number | undefined>(undefined);
+  const loadAllJobsTimerRef = useRef<number | undefined>(undefined);
   const loadChatsAbortRef = useRef<AbortController | null>(null);
   const loadChatAbortRef = useRef<AbortController | null>(null);
   const shellRef = useRef<HTMLElement | null>(null);
@@ -1058,8 +1091,8 @@ function App() {
   function updateChatBottomState() {
     const scroller = getChatScroller();
     const distanceToBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
-    const atBottom = distanceToBottom < 120;
-    const atTop = scroller.scrollTop < 120;
+    const atBottom = distanceToBottom <= CHAT_BOTTOM_THRESHOLD_PX;
+    const atTop = scroller.scrollTop <= CHAT_TOP_THRESHOLD_PX;
     chatAtBottomRef.current = atBottom;
     setShowChatScrollTop(!atTop);
     setShowChatScrollBottom(!atBottom);
@@ -1067,24 +1100,26 @@ function App() {
   }
 
   function scrollChatToLatest(behavior: ScrollBehavior = "smooth") {
-    const target = lastMessageRef.current ?? shellRef.current;
-    target?.scrollIntoView({ behavior, block: "end" });
+    const scroller = getChatScroller();
+    scroller.scrollTo({ top: scroller.scrollHeight, behavior });
     chatAtBottomRef.current = true;
     setShowJumpToLatest(false);
     setShowChatScrollBottom(false);
-    window.requestAnimationFrame(updateChatBottomState);
+    window.setTimeout(updateChatBottomState, behavior === "smooth" ? 260 : 0);
   }
 
   function scrollChatToTop(behavior: ScrollBehavior = "smooth") {
     const target = firstMessageRef.current ?? chatThreadRef.current ?? shellRef.current;
     target?.scrollIntoView({ behavior, block: "start" });
     chatAtBottomRef.current = false;
-    window.requestAnimationFrame(updateChatBottomState);
+    setShowChatScrollBottom(true);
+    window.setTimeout(updateChatBottomState, behavior === "smooth" ? 260 : 0);
   }
 
   async function refresh() {
-    const [agentResponse, repoResponse] = await Promise.all([api("/api/agents"), api("/api/repos")]);
+    const [agentResponse, repoResponse, jobsResponse] = await Promise.all([api("/api/agents"), api("/api/repos"), api("/api/jobs")]);
     if (agentResponse.ok) setAgents((await agentResponse.json()).agents);
+    if (jobsResponse.ok) setAllJobs((await jobsResponse.json()).jobs);
     if (repoResponse.ok) {
       const nextRepos = (await repoResponse.json()).repos;
       setRepos(nextRepos);
@@ -1092,6 +1127,12 @@ function App() {
         clearProjectSelection();
       }
     }
+  }
+
+  async function loadAllJobs() {
+    const response = await api("/api/jobs");
+    if (!response.ok) return;
+    setAllJobs((await response.json()).jobs);
   }
 
   async function loadUsers() {
@@ -1170,6 +1211,7 @@ function App() {
     });
     setActiveChatId(chatId);
     setJobs(data.jobs);
+    setAllJobs((current) => mergeJobs(current, data.jobs));
     setMessages(data.messages ?? []);
     const targetJobId = preferredJobId ?? data.jobs[0]?.id;
     if (targetJobId) await loadJob(targetJobId);
@@ -1184,6 +1226,7 @@ function App() {
     if (!response.ok) return;
     const data = await response.json();
     setActiveJob(data.job);
+    setAllJobs((current) => mergeJobs(current, [data.job]));
     setLogs(data.logs);
   }
 
@@ -1205,6 +1248,13 @@ function App() {
     if (loadJobTimerRef.current) window.clearTimeout(loadJobTimerRef.current);
     loadJobTimerRef.current = window.setTimeout(() => {
       loadJob(jobId).catch(() => undefined);
+    }, 250);
+  }
+
+  function scheduleLoadAllJobs() {
+    if (loadAllJobsTimerRef.current) window.clearTimeout(loadAllJobsTimerRef.current);
+    loadAllJobsTimerRef.current = window.setTimeout(() => {
+      loadAllJobs().catch(() => undefined);
     }, 250);
   }
 
@@ -1409,9 +1459,11 @@ function App() {
           const repo = selectedRepoRef.current;
           if (repo && message.agentId === repo.agentId && message.repoId === repo.id) scheduleLoadChats(repo);
           if (activeChatIdRef.current) scheduleLoadChat(activeChatIdRef.current);
+          scheduleLoadAllJobs();
           return;
         }
         if (message.type === "job.created" || message.type === "job.updated") {
+          scheduleLoadAllJobs();
           if (message.jobId && activeJobIdRef.current === message.jobId) scheduleLoadJob(message.jobId);
           if (activeChatIdRef.current) scheduleLoadChat(activeChatIdRef.current);
         }
@@ -1428,6 +1480,7 @@ function App() {
       if (loadChatsTimerRef.current) window.clearTimeout(loadChatsTimerRef.current);
       if (loadChatTimerRef.current) window.clearTimeout(loadChatTimerRef.current);
       if (loadJobTimerRef.current) window.clearTimeout(loadJobTimerRef.current);
+      if (loadAllJobsTimerRef.current) window.clearTimeout(loadAllJobsTimerRef.current);
       ws?.close();
     };
   }, [csrf]);
@@ -2590,10 +2643,20 @@ function App() {
             <div className="nav-subtree">
               {repos.map((repo) => {
                 const selected = selectedRepo?.agentId === repo.agentId && selectedRepo.id === repo.id;
+                const currentRepoKey = `${repo.agentId}:${repo.id}`;
+                const busyProjectCount = busyCountByRepo.get(currentRepoKey) ?? 0;
                 return (
-                  <div className="nav-project" key={`${repo.agentId}:${repo.id}`}>
+                  <div className="nav-project" key={currentRepoKey}>
                     <button className={selected ? "nav-leaf project active" : "nav-leaf project"} onClick={() => selectProject(repo)}>
-                      <span>{repo.name}</span>
+                      <span className="nav-project-title">
+                        {busyProjectCount > 0 && (
+                          <span className="busy-indicator" aria-label={`${busyProjectCount} working chats`}>
+                            <RefreshCw className="spin" size={13} />
+                            {busyProjectCount > 1 && <small>{busyProjectCount}</small>}
+                          </span>
+                        )}
+                        <span>{repo.name}</span>
+                      </span>
                       <small>{repo.currentBranch || "no branch"} · {repo.dirty ? "dirty" : "clean"}</small>
                     </button>
                     {selected && (
@@ -2609,7 +2672,7 @@ function App() {
                               loadChat(chat.id);
                             }}>
                               <span className="nav-chat-title">
-                                {thinkingChatId === chat.id && <RefreshCw className="spin" size={13} />}
+                                {(busyChatIds.has(chat.id) || (localBusyRepoKey === currentRepoKey && localBusyChatTitle === chat.title)) && <RefreshCw className="spin" size={13} />}
                                 <span>{chat.title}</span>
                               </span>
                               <small>{new Date(chat.updatedAt).toLocaleString()}</small>
@@ -2886,12 +2949,12 @@ function App() {
                     {(showChatScrollTop || showChatScrollBottom) && (
                       <div className="chat-scroll-controls" aria-label="Прокрутка чата">
                         {showChatScrollTop && (
-                          <button type="button" onClick={() => scrollChatToTop("smooth")} title="К началу чата">
+                          <button className="scroll-up" type="button" onClick={() => scrollChatToTop("smooth")} title="К началу чата">
                             <ArrowUp size={18} />
                           </button>
                         )}
                         {showChatScrollBottom && (
-                          <button className={showJumpToLatest ? "has-new" : ""} type="button" onClick={() => scrollChatToLatest("smooth")} title="К последним сообщениям">
+                          <button className={`scroll-down ${showJumpToLatest ? "has-new" : ""}`} type="button" onClick={() => scrollChatToLatest("smooth")} title="К последним сообщениям">
                             <ArrowDown size={18} />
                           </button>
                         )}

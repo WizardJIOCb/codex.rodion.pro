@@ -346,6 +346,47 @@ textarea:focus {
   border-color: var(--line-strong);
 }
 
+.nav-project-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.nav-project-title > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.busy-indicator {
+  position: relative;
+  width: 17px;
+  height: 17px;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  color: var(--accent-2);
+}
+
+.busy-indicator small {
+  position: absolute;
+  right: -6px;
+  bottom: -5px;
+  min-width: 13px;
+  height: 13px;
+  display: grid;
+  place-items: center;
+  padding: 0 3px;
+  border: 1px solid #ffffff;
+  border-radius: 999px;
+  color: #ffffff;
+  background: var(--accent-2);
+  font-size: 9px;
+  line-height: 1;
+  font-weight: 900;
+}
+
 .nav-chat-row {
   position: relative;
   display: grid;
