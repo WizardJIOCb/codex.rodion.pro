@@ -2068,6 +2068,39 @@ pre {
   color: var(--text);
 }
 
+.chat-loading {
+  min-height: 260px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  padding: 28px 16px;
+  color: var(--text);
+  text-align: center;
+}
+
+.chat-loading-orbit {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(16, 163, 127, 0.22);
+  border-radius: 999px;
+  color: var(--accent-2);
+  background: #eef7f4;
+  box-shadow: 0 14px 34px rgba(16, 163, 127, 0.12);
+}
+
+.chat-loading strong {
+  font-size: 15px;
+}
+
+.chat-loading small {
+  max-width: 320px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
 .logs {
   min-height: 220px;
   max-height: 44vh;

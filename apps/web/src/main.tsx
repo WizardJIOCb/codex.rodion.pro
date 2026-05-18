@@ -311,6 +311,11 @@ function api(path: string, options: RequestInit = {}) {
   }));
 }
 
+function isAbortError(error: unknown) {
+  return error instanceof DOMException && error.name === "AbortError"
+    || error instanceof Error && error.name === "AbortError";
+}
+
 function defaultProjectPath(name: string) {
   const slug = name
     .trim()
@@ -962,6 +967,7 @@ function App() {
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [repoKey, setRepoKey] = useState("");
   const [activeChatId, setActiveChatId] = useState("");
+  const [chatLoadingId, setChatLoadingId] = useState("");
   const [sandbox, setSandbox] = useState<Sandbox>("danger-full-access");
   const [busy, setBusy] = useState(false);
   const [projectPanel, setProjectPanel] = useState<"new" | "settings" | null>(null);
@@ -1030,6 +1036,7 @@ function App() {
 
   const selectedRepo = useMemo(() => repos.find((repo) => `${repo.agentId}:${repo.id}` === repoKey), [repoKey, repos]);
   const activeChat = useMemo(() => chats.find((chat) => chat.id === activeChatId), [activeChatId, chats]);
+  const chatIsLoading = Boolean(activeChatId && chatLoadingId === activeChatId);
   const selectedAgent = agents.find((agent) => agent.status === "online") ?? agents[0];
   const online = agents.some((agent) => agent.status === "online");
   const localActivity = selectedAgent?.localActivity;
@@ -1250,26 +1257,31 @@ function App() {
     loadChatsAbortRef.current?.abort();
     const controller = new AbortController();
     loadChatsAbortRef.current = controller;
-    const response = await api(`/api/chats?agentId=${encodeURIComponent(repo.agentId)}&repoId=${encodeURIComponent(repo.id)}`, { signal: controller.signal });
-    if (loadChatsAbortRef.current !== controller) return;
-    if (!response.ok) {
+    try {
+      const response = await api(`/api/chats?agentId=${encodeURIComponent(repo.agentId)}&repoId=${encodeURIComponent(repo.id)}`, { signal: controller.signal });
+      if (loadChatsAbortRef.current !== controller) return;
+      if (!response.ok) {
+        loadChatsAbortRef.current = null;
+        return;
+      }
+      const nextChats = (await response.json()).chats;
+      if (loadChatsAbortRef.current !== controller) return;
       loadChatsAbortRef.current = null;
-      return;
-    }
-    const nextChats = (await response.json()).chats;
-    if (loadChatsAbortRef.current !== controller) return;
-    loadChatsAbortRef.current = null;
-    setChats(nextChats);
-    if (selectFirst && nextChats[0]) {
-      await loadChat(nextChats[0].id);
-      return;
-    }
-    if (activeChatId && !nextChats.some((chat: Chat) => chat.id === activeChatId)) {
-      setActiveChatId("");
-      setJobs([]);
-      setMessages([]);
-      setActiveJob(null);
-      setLogs([]);
+      setChats(nextChats);
+      if (selectFirst && nextChats[0]) {
+        await loadChat(nextChats[0].id, undefined, true);
+        return;
+      }
+      if (activeChatId && !nextChats.some((chat: Chat) => chat.id === activeChatId)) {
+        setActiveChatId("");
+        setChatLoadingId("");
+        setJobs([]);
+        setMessages([]);
+        setActiveJob(null);
+        setLogs([]);
+      }
+    } catch (error) {
+      if (!isAbortError(error)) throw error;
     }
   }
 
@@ -1280,32 +1292,47 @@ function App() {
     setHiddenLocalChats(nextChats);
   }
 
-  async function loadChat(chatId: string, preferredJobId?: string) {
+  async function loadChat(chatId: string, preferredJobId?: string, showLoader = false) {
     loadChatAbortRef.current?.abort();
     const controller = new AbortController();
     loadChatAbortRef.current = controller;
-    const response = await api(`/api/chats/${chatId}`, { signal: controller.signal });
-    if (loadChatAbortRef.current !== controller) return;
-    if (!response.ok) {
-      loadChatAbortRef.current = null;
-      return;
+    if (showLoader) {
+      setActiveChatId(chatId);
+      setChatLoadingId(chatId);
+      setChatNotice("");
     }
-    const data = await response.json();
-    if (loadChatAbortRef.current !== controller) return;
-    loadChatAbortRef.current = null;
-    setChats((current) => {
-      const withoutLoaded = current.filter((chat) => chat.id !== data.chat.id);
-      return [data.chat, ...withoutLoaded].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
-    });
-    setActiveChatId(chatId);
-    setJobs(data.jobs);
-    setAllJobs((current) => mergeJobs(current, data.jobs));
-    setMessages(data.messages ?? []);
-    const targetJobId = preferredJobId ?? data.jobs[0]?.id;
-    if (targetJobId) await loadJob(targetJobId);
-    else {
-      setActiveJob(null);
-      setLogs([]);
+    try {
+      const response = await api(`/api/chats/${chatId}`, { signal: controller.signal });
+      if (loadChatAbortRef.current !== controller) return;
+      if (!response.ok) {
+        loadChatAbortRef.current = null;
+        setChatLoadingId((current) => current === chatId ? "" : current);
+        return;
+      }
+      const data = await response.json();
+      if (loadChatAbortRef.current !== controller) return;
+      loadChatAbortRef.current = null;
+      setChatLoadingId((current) => current === chatId ? "" : current);
+      setChats((current) => {
+        const withoutLoaded = current.filter((chat) => chat.id !== data.chat.id);
+        return [data.chat, ...withoutLoaded].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+      });
+      setActiveChatId(chatId);
+      setJobs(data.jobs);
+      setAllJobs((current) => mergeJobs(current, data.jobs));
+      setMessages(data.messages ?? []);
+      const targetJobId = preferredJobId ?? data.jobs[0]?.id;
+      if (targetJobId) await loadJob(targetJobId);
+      else {
+        setActiveJob(null);
+        setLogs([]);
+      }
+    } catch (error) {
+      if (loadChatAbortRef.current === controller) {
+        loadChatAbortRef.current = null;
+        setChatLoadingId((current) => current === chatId ? "" : current);
+      }
+      if (!isAbortError(error)) throw error;
     }
   }
 
@@ -1380,6 +1407,7 @@ function App() {
     setNginxNotice("");
     setSslNotice("");
     setActiveChatId("");
+    setChatLoadingId("");
     setJobs([]);
     setMessages([]);
     setActiveJob(null);
@@ -1396,6 +1424,7 @@ function App() {
     setRepoKey("");
     setChats([]);
     setActiveChatId("");
+    setChatLoadingId("");
     setJobs([]);
     setMessages([]);
     setActiveJob(null);
@@ -1415,6 +1444,7 @@ function App() {
     setProjectPanel(null);
     setRepoKey("");
     setActiveChatId("");
+    setChatLoadingId("");
     setJobs([]);
     setMessages([]);
     setActiveJob(null);
@@ -1428,6 +1458,7 @@ function App() {
     setProjectPanel(null);
     setRepoKey("");
     setActiveChatId("");
+    setChatLoadingId("");
     setJobs([]);
     setMessages([]);
     setActiveJob(null);
@@ -1902,6 +1933,7 @@ function App() {
     setChats(nextChats);
     if (activeChatId === chat.id) {
       setActiveChatId("");
+      setChatLoadingId("");
       setJobs([]);
       setMessages([]);
       setActiveJob(null);
@@ -2789,7 +2821,7 @@ function App() {
                               return (
                             <button className="nav-leaf chat-child" onClick={() => {
                               setMobileMenuOpen(false);
-                              loadChat(chat.id);
+                              loadChat(chat.id, undefined, true).catch(() => undefined);
                             }}>
                               <span className="nav-chat-title">
                                 {chatIsBusy && <RefreshCw className="spin" size={13} />}
@@ -3026,7 +3058,15 @@ function App() {
                 <section className="workspace">
                   <section className="job-detail">
                     <section className="chat-thread" ref={chatThreadRef}>
-                      {timelineItems.length ? timelineItems.map((item, index) => {
+                      {chatIsLoading ? (
+                        <div className="chat-loading">
+                          <span className="chat-loading-orbit" aria-hidden="true">
+                            <RefreshCw className="spin" size={22} />
+                          </span>
+                          <strong>Загружаю чат</strong>
+                          <small>Подтягиваю сообщения, запуски и детали выполнения.</small>
+                        </div>
+                      ) : timelineItems.length ? timelineItems.map((item, index) => {
                         const { message, collapsedRun } = item;
                         const jobId = messageJobId(message);
                         const messageJob = jobs.find((job) => job.id === jobId);
