@@ -2604,8 +2604,9 @@ function App() {
   }
 
   function toggleFileDiff(diffKey: string, message: ChatMessage, job?: Job, fileDiff?: FileDiff) {
-    if (fileDiff) {
-      setExpandedActions((current) => ({ ...current, [diffKey]: !current[diffKey] }));
+    const willExpand = !expandedActions[diffKey];
+    setExpandedActions((current) => ({ ...current, [diffKey]: !current[diffKey] }));
+    if (!willExpand || fileDiff) {
       return;
     }
     if (job?.id && (job.gitDiffOmitted || (job.gitDiffStat && !job.gitDiff))) {
@@ -2664,7 +2665,7 @@ function App() {
                       <ChevronDown className={fileExpanded ? "open" : ""} size={15} />
                     </small>
                   </button>
-                  {fileExpanded && fileDiff && renderFileDiff(fileDiff)}
+                  {fileExpanded && (fileDiff ? renderFileDiff(fileDiff) : <div className="codex-change-loading">Loading diff...</div>)}
                 </div>
               );
             })}

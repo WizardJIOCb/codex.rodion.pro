@@ -1890,6 +1890,15 @@ h2 {
   transform: rotate(180deg);
 }
 
+.codex-change-loading {
+  padding: 10px 12px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  background: #fbfbf8;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .file-diff-panel {
   display: grid;
   max-height: 360px;
