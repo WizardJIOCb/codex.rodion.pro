@@ -933,7 +933,7 @@ textarea:focus {
 }
 
 .job-detail {
-  padding-bottom: var(--composer-space, 150px);
+  padding-bottom: 0;
 }
 
 .chat.active,
