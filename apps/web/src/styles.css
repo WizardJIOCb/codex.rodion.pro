@@ -2458,7 +2458,13 @@ button:disabled {
 
   .chat-scroll-controls {
     right: max(12px, env(safe-area-inset-right));
-    bottom: calc(96px + env(safe-area-inset-bottom));
+    bottom: calc(72px + env(safe-area-inset-bottom));
+    gap: 6px;
+  }
+
+  .chat-scroll-controls button {
+    width: 34px;
+    height: 34px;
   }
 
   .progress-panel {

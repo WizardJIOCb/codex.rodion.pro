@@ -730,6 +730,10 @@ function isJobRunning(job: Job) {
   return ["queued", "assigned", "running"].includes(job.status);
 }
 
+function isTerminalJobStatus(status: string) {
+  return !["queued", "assigned", "running"].includes(status);
+}
+
 function isJobPromptMessage(message: ChatMessage, jobId: string) {
   return message.externalId === `job:${jobId}:prompt` || (message.role === "user" && messageJobId(message) === jobId);
 }
@@ -1258,6 +1262,24 @@ function App() {
     }, 250);
   }
 
+  function applyJobStatusUpdate(jobId: string, status: string) {
+    const finishedAt = isTerminalJobStatus(status) ? new Date().toISOString() : undefined;
+    const patchJob = (job: Job): Job => (
+      job.id === jobId
+        ? { ...job, status, finishedAt: finishedAt ?? job.finishedAt }
+        : job
+    );
+    setAllJobs((current) => current.map(patchJob));
+    setJobs((current) => current.map(patchJob));
+    setActiveJob((current) => current?.id === jobId ? patchJob(current) : current);
+    if (finishedAt) {
+      setAgents((current) => current.map((agent) => (
+        agent.current_job_id === jobId ? { ...agent, current_job_id: null } : agent
+      )));
+      setLocalBusyHold({ until: 0 });
+    }
+  }
+
   async function openJob(job: Job) {
     if (job.chatId) await loadChat(job.chatId, job.id);
     else await loadJob(job.id);
@@ -1463,6 +1485,9 @@ function App() {
           return;
         }
         if (message.type === "job.created" || message.type === "job.updated") {
+          if (typeof message.jobId === "string" && typeof message.status === "string") {
+            applyJobStatusUpdate(message.jobId, message.status);
+          }
           scheduleLoadAllJobs();
           if (message.jobId && activeJobIdRef.current === message.jobId) scheduleLoadJob(message.jobId);
           if (activeChatIdRef.current) scheduleLoadChat(activeChatIdRef.current);
@@ -2628,6 +2653,7 @@ function App() {
   }
 
   return (
+    <>
     <main className="app-frame">
       <aside className={`app-nav ${mobileMenuOpen ? "open" : ""}`}>
         <div className="nav-brand">
@@ -3015,21 +3041,6 @@ function App() {
       )}
       </section>
 
-      {activeChat && (showChatScrollTop || showChatScrollBottom) && (
-        <div className="chat-scroll-controls" aria-label="Прокрутка чата">
-          {showChatScrollTop && (
-            <button className="scroll-up" type="button" onClick={() => scrollChatToTop("smooth")} title="К началу чата">
-              <ArrowUp size={18} />
-            </button>
-          )}
-          {showChatScrollBottom && (
-            <button className={`scroll-down ${showJumpToLatest ? "has-new" : ""}`} type="button" onClick={() => scrollChatToLatest("smooth")} title="К последним сообщениям">
-              <ArrowDown size={18} />
-            </button>
-          )}
-        </div>
-      )}
-
       <aside className="agent-console">
         <section className="agent-card">
           <div className="section-head">
@@ -3105,6 +3116,21 @@ function App() {
         </div>
       )}
     </main>
+    {activeChat && (showChatScrollTop || showChatScrollBottom) && (
+      <div className="chat-scroll-controls" aria-label="Прокрутка чата">
+        {showChatScrollTop && (
+          <button className="scroll-up" type="button" onClick={() => scrollChatToTop("smooth")} title="К началу чата">
+            <ArrowUp size={18} />
+          </button>
+        )}
+        {showChatScrollBottom && (
+          <button className={`scroll-down ${showJumpToLatest ? "has-new" : ""}`} type="button" onClick={() => scrollChatToLatest("smooth")} title="К последним сообщениям">
+            <ArrowDown size={18} />
+          </button>
+        )}
+      </div>
+    )}
+    </>
   );
 }
 
