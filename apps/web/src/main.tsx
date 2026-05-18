@@ -1250,6 +1250,8 @@ function App() {
   const previousMessageIdsRef = useRef<Set<string>>(new Set());
   const previousMessageSignaturesRef = useRef<Map<string, string>>(new Map());
   const chatAtBottomRef = useRef(true);
+  const chatStickToBottomRef = useRef(true);
+  const autoScrollingUntilRef = useRef(0);
   activeChatIdRef.current = activeChatId;
   activeJobIdRef.current = activeJob?.id ?? "";
   selectedRepoRef.current = selectedRepo;
@@ -1288,12 +1290,14 @@ function App() {
     return (document.scrollingElement || document.documentElement) as HTMLElement;
   }
 
-  function updateChatBottomState() {
+  function updateChatBottomState(source: "scroll" | "measure" = "measure") {
     const scroller = getChatScroller();
     const distanceToBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
     const atBottom = distanceToBottom <= CHAT_BOTTOM_THRESHOLD_PX;
     const atTop = scroller.scrollTop <= CHAT_TOP_THRESHOLD_PX;
     chatAtBottomRef.current = atBottom;
+    if (atBottom) chatStickToBottomRef.current = true;
+    else if (source === "scroll" && Date.now() > autoScrollingUntilRef.current) chatStickToBottomRef.current = false;
     setShowChatScrollTop(!atTop);
     setShowChatScrollBottom(!atBottom);
     if (atBottom) setShowJumpToLatest(false);
@@ -1301,8 +1305,10 @@ function App() {
 
   function scrollChatToLatest(behavior: ScrollBehavior = "smooth") {
     const scroller = getChatScroller();
+    autoScrollingUntilRef.current = Date.now() + (behavior === "smooth" ? 420 : 80);
     scroller.scrollTo({ top: scroller.scrollHeight, behavior });
     chatAtBottomRef.current = true;
+    chatStickToBottomRef.current = true;
     setShowJumpToLatest(false);
     setShowChatScrollBottom(false);
     window.setTimeout(updateChatBottomState, behavior === "smooth" ? 260 : 0);
@@ -1312,6 +1318,7 @@ function App() {
     const target = firstMessageRef.current ?? chatThreadRef.current ?? shellRef.current;
     target?.scrollIntoView({ behavior, block: "start" });
     chatAtBottomRef.current = false;
+    chatStickToBottomRef.current = false;
     setShowChatScrollBottom(true);
     window.setTimeout(updateChatBottomState, behavior === "smooth" ? 260 : 0);
   }
@@ -1848,18 +1855,19 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const update = () => updateChatBottomState();
+    const updateFromScroll = () => updateChatBottomState("scroll");
+    const updateFromMeasure = () => updateChatBottomState("measure");
     const scroller = getChatScroller();
     if (scroller !== document.documentElement && scroller !== document.body) {
-      scroller.addEventListener("scroll", update, { passive: true });
+      scroller.addEventListener("scroll", updateFromScroll, { passive: true });
     }
-    window.addEventListener("scroll", update, { passive: true });
-    window.addEventListener("resize", update);
-    window.requestAnimationFrame(update);
+    window.addEventListener("scroll", updateFromScroll, { passive: true });
+    window.addEventListener("resize", updateFromMeasure);
+    window.requestAnimationFrame(updateFromMeasure);
     return () => {
-      scroller.removeEventListener("scroll", update);
-      window.removeEventListener("scroll", update);
-      window.removeEventListener("resize", update);
+      scroller.removeEventListener("scroll", updateFromScroll);
+      window.removeEventListener("scroll", updateFromScroll);
+      window.removeEventListener("resize", updateFromMeasure);
     };
   }, [activeChatId, messages.length, selectedRepo?.id, view]);
 
@@ -1896,7 +1904,7 @@ function App() {
   }, [activeChat, activeChatId, chatIsLoading, timelineItems.length, messages.length, jobs.length, view]);
 
   useEffect(() => {
-    if (!showChatThinkingIndicator || !chatAtBottomRef.current) return;
+    if (!showChatThinkingIndicator || !chatStickToBottomRef.current) return;
     const raf = window.requestAnimationFrame(() => scrollChatToLatest("smooth"));
     return () => window.cancelAnimationFrame(raf);
   }, [showChatThinkingIndicator, activeChatId]);
@@ -1947,6 +1955,7 @@ function App() {
       previousMessageSignaturesRef.current = nextSignatures;
       setHighlightedMessageIds(new Set());
       setShowJumpToLatest(false);
+      chatStickToBottomRef.current = true;
       window.requestAnimationFrame(() => scrollChatToLatest("auto"));
       return;
     }
@@ -1970,12 +1979,12 @@ function App() {
       });
     }, 1400);
 
-    const shouldStickToBottom = chatAtBottomRef.current;
+    const shouldStickToBottom = chatStickToBottomRef.current;
     window.requestAnimationFrame(() => {
       if (shouldStickToBottom) {
         scrollChatToLatest("smooth");
         window.setTimeout(() => {
-          if (chatAtBottomRef.current) scrollChatToLatest("smooth");
+          if (chatStickToBottomRef.current) scrollChatToLatest("smooth");
         }, 180);
       }
       else {
@@ -3160,7 +3169,7 @@ function App() {
       </aside>
       {mobileMenuOpen && <button className="mobile-menu-backdrop" aria-label="Закрыть меню" type="button" onClick={() => setMobileMenuOpen(false)} />}
 
-      <section className="shell" ref={shellRef} onScroll={updateChatBottomState}>
+      <section className="shell" ref={shellRef} onScroll={() => updateChatBottomState("scroll")}>
       <header className="topbar">
         <div className="top-nav-controls">
           <button
