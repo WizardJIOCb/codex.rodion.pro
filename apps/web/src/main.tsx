@@ -1949,8 +1949,14 @@ function App() {
       });
     }, 1400);
 
+    const shouldStickToBottom = chatAtBottomRef.current;
     window.requestAnimationFrame(() => {
-      if (chatAtBottomRef.current) scrollChatToLatest("smooth");
+      if (shouldStickToBottom) {
+        scrollChatToLatest("smooth");
+        window.setTimeout(() => {
+          if (chatAtBottomRef.current) scrollChatToLatest("smooth");
+        }, 180);
+      }
       else {
         setShowJumpToLatest(true);
         setShowChatScrollBottom(true);
