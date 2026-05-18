@@ -11,6 +11,7 @@ import {
   CheckCircle2,
   ChevronDown,
   ArrowDown,
+  ArrowUp,
   Clock3,
   FolderGit2,
   Github,
@@ -19,6 +20,7 @@ import {
   Link2,
   LogOut,
   Mail,
+  Menu,
   MoreHorizontal,
   MessageSquare,
   Paperclip,
@@ -901,6 +903,9 @@ function App() {
   const [localBusyHold, setLocalBusyHold] = useState<{ until: number; since?: string }>({ until: 0 });
   const [highlightedMessageIds, setHighlightedMessageIds] = useState<Set<string>>(() => new Set());
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
+  const [showChatScrollTop, setShowChatScrollTop] = useState(false);
+  const [showChatScrollBottom, setShowChatScrollBottom] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const selectedRepo = useMemo(() => repos.find((repo) => `${repo.agentId}:${repo.id}` === repoKey), [repoKey, repos]);
   const activeChat = useMemo(() => chats.find((chat) => chat.id === activeChatId), [activeChatId, chats]);
@@ -952,6 +957,8 @@ function App() {
   const loadChatsAbortRef = useRef<AbortController | null>(null);
   const loadChatAbortRef = useRef<AbortController | null>(null);
   const shellRef = useRef<HTMLElement | null>(null);
+  const chatThreadRef = useRef<HTMLElement | null>(null);
+  const firstMessageRef = useRef<HTMLElement | null>(null);
   const lastMessageRef = useRef<HTMLElement | null>(null);
   const currentScrollChatRef = useRef("");
   const previousMessageIdsRef = useRef<Set<string>>(new Set());
@@ -972,12 +979,22 @@ function App() {
   } : null;
   const firstActiveProgressFile = activeProgress?.files?.[0];
 
-  function updateChatBottomState() {
+  function getChatScroller() {
     const shell = shellRef.current;
-    if (!shell) return;
-    const distanceToBottom = shell.scrollHeight - shell.scrollTop - shell.clientHeight;
+    if (shell && shell.scrollHeight > shell.clientHeight + 1 && getComputedStyle(shell).overflowY !== "visible") {
+      return shell;
+    }
+    return (document.scrollingElement || document.documentElement) as HTMLElement;
+  }
+
+  function updateChatBottomState() {
+    const scroller = getChatScroller();
+    const distanceToBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
     const atBottom = distanceToBottom < 120;
+    const atTop = scroller.scrollTop < 120;
     chatAtBottomRef.current = atBottom;
+    setShowChatScrollTop(!atTop);
+    setShowChatScrollBottom(!atBottom);
     if (atBottom) setShowJumpToLatest(false);
   }
 
@@ -986,6 +1003,15 @@ function App() {
     target?.scrollIntoView({ behavior, block: "end" });
     chatAtBottomRef.current = true;
     setShowJumpToLatest(false);
+    setShowChatScrollBottom(false);
+    window.requestAnimationFrame(updateChatBottomState);
+  }
+
+  function scrollChatToTop(behavior: ScrollBehavior = "smooth") {
+    const target = firstMessageRef.current ?? chatThreadRef.current ?? shellRef.current;
+    target?.scrollIntoView({ behavior, block: "start" });
+    chatAtBottomRef.current = false;
+    window.requestAnimationFrame(updateChatBottomState);
   }
 
   async function refresh() {
@@ -1120,6 +1146,7 @@ function App() {
   }
 
   function selectProject(repo: Repo) {
+    setMobileMenuOpen(false);
     setRepoKey(`${repo.agentId}:${repo.id}`);
     setSandbox(repo.defaultSandbox);
     setGitMessage(`Update ${repo.name}`);
@@ -1140,6 +1167,7 @@ function App() {
   }
 
   function clearProjectSelection() {
+    setMobileMenuOpen(false);
     setView("projects");
     setRepoKey("");
     setChats([]);
@@ -1158,6 +1186,7 @@ function App() {
   }
 
   function openSettingsView() {
+    setMobileMenuOpen(false);
     setView("settings");
     setProjectPanel(null);
     setRepoKey("");
@@ -1170,6 +1199,7 @@ function App() {
   }
 
   function openProfileView() {
+    setMobileMenuOpen(false);
     setView("profile");
     setProjectPanel(null);
     setRepoKey("");
@@ -1214,6 +1244,7 @@ function App() {
   }
 
   function openChatProperties(chat: Chat) {
+    setMobileMenuOpen(false);
     setChatProperties(chat);
     setChatSettingsTitle(chat.title);
     setLinkedChatId("");
@@ -1338,6 +1369,30 @@ function App() {
   }, []);
 
   useEffect(() => {
+    document.body.classList.toggle("mobile-menu-open", mobileMenuOpen);
+    return () => document.body.classList.remove("mobile-menu-open");
+  }, [mobileMenuOpen]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMobileMenuOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  useEffect(() => {
+    const update = () => updateChatBottomState();
+    window.addEventListener("scroll", update, { passive: true });
+    window.addEventListener("resize", update);
+    window.requestAnimationFrame(update);
+    return () => {
+      window.removeEventListener("scroll", update);
+      window.removeEventListener("resize", update);
+    };
+  }, [activeChatId, messages.length, selectedRepo?.id, view]);
+
+  useEffect(() => {
     const now = Date.now();
     if (rawLocalCodexBusy) {
       const detectedAt = localActivity?.busySinceAt || localActivity?.updatedAt || localActivity?.detectedAt || new Date(now).toISOString();
@@ -1401,7 +1456,10 @@ function App() {
 
     window.requestAnimationFrame(() => {
       if (chatAtBottomRef.current) scrollChatToLatest("smooth");
-      else setShowJumpToLatest(true);
+      else {
+        setShowJumpToLatest(true);
+        setShowChatScrollBottom(true);
+      }
     });
   }, [activeChatId, messages]);
 
@@ -1525,6 +1583,7 @@ function App() {
     if (!response.ok) return;
     const { chatId } = await response.json();
     setChatTitle("");
+    setMobileMenuOpen(false);
     await loadChats(selectedRepo);
     await loadChat(chatId);
   }
@@ -2091,37 +2150,6 @@ function App() {
     setCurrentUser(null);
   }
 
-  function renderJobCompletion(job: Job, progress: JobProgress | null) {
-    if (!job.finishedAt || ["queued", "assigned", "running"].includes(job.status)) return null;
-    const summary = diffSummary(job.gitDiffStat, progress);
-    const rows = diffRows(job.gitDiffStat, progress?.files);
-    return (
-      <div className="completion-card">
-        <div className="completion-head">
-          <span className={`pill ${job.status}`}><CheckCircle2 size={15} /> {job.status}</span>
-          <strong>Работал {formatDuration(jobDurationSeconds(job))}</strong>
-        </div>
-        <div className="completion-stats">
-          <span><Wrench size={15} /> {summary.files} файлов</span>
-          <span>+{summary.added}</span>
-          <span>-{summary.deleted}</span>
-        </div>
-        {rows.length ? (
-          <div className="completion-files">
-            {rows.map((row) => (
-              <div key={row.file}>
-                <span>{row.file}</span>
-                <small className="diff-meta">{renderDiffRowMeta(row)}</small>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <small>Файлы не изменены.</small>
-        )}
-      </div>
-    );
-  }
-
   function renderCodexChangeCard(message: ChatMessage, job?: Job, progress?: JobProgress | null) {
     const stat = job?.gitDiffStat || (typeof message.metadata?.gitDiffStat === "string" ? message.metadata.gitDiffStat : "");
     const diff = job?.gitDiff || (typeof message.metadata?.gitDiff === "string" ? message.metadata.gitDiff : "");
@@ -2439,10 +2467,13 @@ function App() {
 
   return (
     <main className="app-frame">
-      <aside className="app-nav">
+      <aside className={`app-nav ${mobileMenuOpen ? "open" : ""}`}>
         <div className="nav-brand">
           <img className="brand-logo" src="/favicon.svg" alt="" />
           <strong>codex.rodion.pro</strong>
+          <button className="icon mobile-nav-close" type="button" onClick={() => setMobileMenuOpen(false)} title="Закрыть меню">
+            <X size={18} />
+          </button>
         </div>
         <nav>
           <div className="nav-group">
@@ -2464,7 +2495,10 @@ function App() {
                         </form>
                         {chats.map((chat) => (
                           <div className={activeChatId === chat.id ? "nav-chat-row active" : "nav-chat-row"} key={chat.id}>
-                            <button className="nav-leaf chat-child" onClick={() => loadChat(chat.id)}>
+                            <button className="nav-leaf chat-child" onClick={() => {
+                              setMobileMenuOpen(false);
+                              loadChat(chat.id);
+                            }}>
                               <span className="nav-chat-title">
                                 {thinkingChatId === chat.id && <RefreshCw className="spin" size={13} />}
                                 <span>{chat.title}</span>
@@ -2506,9 +2540,13 @@ function App() {
           <small>{selectedAgent?.hostname ?? "Waiting for heartbeat"}</small>
         </div>
       </aside>
+      {mobileMenuOpen && <button className="mobile-menu-backdrop" aria-label="Закрыть меню" type="button" onClick={() => setMobileMenuOpen(false)} />}
 
       <section className="shell" ref={shellRef} onScroll={updateChatBottomState}>
       <header className="topbar">
+        <button className="icon mobile-menu-toggle" type="button" onClick={() => setMobileMenuOpen(true)} title="Меню">
+          <Menu size={19} />
+        </button>
         <div>
           <span className={`status ${online ? "ok" : "bad"}`}>{online ? <Wifi size={16} /> : <WifiOff size={16} />} {online ? "Home PC online" : "Home PC offline"}</span>
           <h1>{view === "settings" ? "Settings" : view === "profile" ? "Profile" : selectedRepo ? selectedRepo.name : "Projects"}</h1>
@@ -2693,18 +2731,22 @@ function App() {
                 {chatNotice && <div className="notice danger">{chatNotice}</div>}
                 <section className="workspace">
                   <section className="job-detail">
-                    <section className="chat-thread">
+                    <section className="chat-thread" ref={chatThreadRef}>
                       {messages.length ? messages.map((message, index) => {
                         const jobId = messageJobId(message);
                         const messageJob = jobs.find((job) => job.id === jobId);
                         const messageProgress = jobId ? progressByJob[jobId] ?? null : null;
                         const isNew = highlightedMessageIds.has(message.id);
+                        const isFirst = index === 0;
                         const isLast = index === messages.length - 1;
                         return (
                           <article
                             className={`message ${message.role}${isNew ? " new-message" : ""}`}
                             key={message.id}
-                            ref={isLast ? lastMessageRef : undefined}
+                            ref={isFirst || isLast ? (node) => {
+                              if (isFirst) firstMessageRef.current = node;
+                              if (isLast) lastMessageRef.current = node;
+                            } : undefined}
                           >
                             <div className="message-meta">
                               <span>{message.role === "user" ? "You" : message.source === "vscode" ? "VS Code" : "Codex"}</span>
@@ -2725,15 +2767,23 @@ function App() {
                       }) : (
                         <div className="empty">Начни этот чат или дождись синхронизации истории из локального Codex/VS Code.</div>
                       )}
-                      {showJumpToLatest && (
-                        <button className="jump-to-latest" type="button" onClick={() => scrollChatToLatest("smooth")}>
-                          <ArrowDown size={18} />
-                          <span>Новое сообщение</span>
-                        </button>
-                      )}
                     </section>
                     {renderComposer()}
-                    {activeJob ? (
+                    {(showChatScrollTop || showChatScrollBottom) && (
+                      <div className="chat-scroll-controls" aria-label="Прокрутка чата">
+                        {showChatScrollTop && (
+                          <button type="button" onClick={() => scrollChatToTop("smooth")} title="К началу чата">
+                            <ArrowUp size={18} />
+                          </button>
+                        )}
+                        {showChatScrollBottom && (
+                          <button className={showJumpToLatest ? "has-new" : ""} type="button" onClick={() => scrollChatToLatest("smooth")} title="К последним сообщениям">
+                            <ArrowDown size={18} />
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    {activeJob && activeRunBusy ? (
                       <>
                         <div className="job-head">
                           <span className={`pill ${activeJob.status}`}><CheckCircle2 size={15} /> {activeJob.status}</span>
@@ -2785,30 +2835,7 @@ function App() {
                             )}
                           </div>
                         ) : null}
-                        {renderJobCompletion(activeJob, activeProgress)}
-                        {activeJob.gitDiffStat && (
-                          <div className="edited-card">
-                            <div className="edited-head">
-                              <strong>Edited {diffRows(activeJob.gitDiffStat, activeProgress?.files).length || activeProgress?.filesChanged || 0} files</strong>
-                              <span>+{activeProgress?.added ?? 0} -{activeProgress?.deleted ?? 0}</span>
-                            </div>
-                            {diffRows(activeJob.gitDiffStat, activeProgress?.files).map((row) => (
-                              <div className="edited-row" key={row.file}>
-                                <span>{row.file}</span>
-                                <small className="diff-meta">{renderDiffRowMeta(row)}</small>
-                              </div>
-                            ))}
-                          </div>
-                        )}
                         {renderLogs(logs)}
-                        <div className="results">
-                          <h2>Git status</h2>
-                          <pre>{activeJob.gitStatus || "No status yet."}</pre>
-                          <h2>Diff stat</h2>
-                          <pre>{activeJob.gitDiffStat || "No diff yet."}</pre>
-                          <h2>Diff</h2>
-                          <pre>{activeJob.gitDiff || "No diff yet."}</pre>
-                        </div>
                       </>
                     ) : null}
                   </section>
