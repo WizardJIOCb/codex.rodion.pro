@@ -1087,19 +1087,21 @@ function App() {
   const busyChatIds = useMemo(() => new Set(runningJobs.map((job) => job.chatId).filter((chatId): chatId is string => Boolean(chatId))), [runningJobs]);
   const activeBusyChatIds = useMemo(() => {
     const ids = new Set(busyChatIds);
-    const activeJobInSelectedRepo = Boolean(
-      activeJob
-      && activeRunBusy
-      && selectedRepo
-      && activeJob.agentId === selectedRepo.agentId
-      && activeJob.repoId === selectedRepo.id
-    );
-    if (activeJobInSelectedRepo) {
+    if (!selectedRepo) return ids;
+
+    runningJobs
+      .filter((job) => job.agentId === selectedRepo.agentId && job.repoId === selectedRepo.id)
+      .forEach((job) => {
+        const chatId = job.chatId || activeChatId;
+        if (chatId) ids.add(chatId);
+      });
+
+    if (activeJob && activeRunBusy && activeJob.agentId === selectedRepo.agentId && activeJob.repoId === selectedRepo.id) {
       const chatId = activeJob?.chatId || activeChatId;
       if (chatId) ids.add(chatId);
     }
     return ids;
-  }, [activeChatId, activeJob, activeRunBusy, busyChatIds, selectedRepo]);
+  }, [activeChatId, activeJob, activeRunBusy, busyChatIds, runningJobs, selectedRepo]);
   const localBusyRepoKey = localCodexBusy && localActivity?.repoId && selectedAgent?.id
     ? `${selectedAgent.id}:${localActivity.repoId}`
     : "";
