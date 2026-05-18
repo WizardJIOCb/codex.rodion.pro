@@ -519,7 +519,7 @@ textarea:focus {
 }
 
 .mobile-menu-toggle,
-.mobile-nav-close,
+.icon.mobile-nav-close,
 .mobile-menu-backdrop {
   display: none;
 }
@@ -2418,7 +2418,7 @@ button:disabled {
     flex: 0 0 auto;
   }
 
-  .mobile-nav-close {
+  .icon.mobile-nav-close {
     display: grid;
     margin-left: auto;
   }
