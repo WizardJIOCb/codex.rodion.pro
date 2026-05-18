@@ -725,11 +725,12 @@ function connect() {
     scheduleLocalChatSyncAfterActivity(localActivity, send);
   }, LOCAL_ACTIVITY_INTERVAL_MS);
 
-  ws.on("close", () => {
+  ws.on("close", (code, reason) => {
     clearInterval(heartbeat);
     clearInterval(chatSync);
     clearInterval(activitySync);
-    console.log("Disconnected. Reconnecting soon...");
+    const reasonText = reason?.toString() || "";
+    console.log(`Disconnected (${code}${reasonText ? ` ${reasonText}` : ""}). Reconnecting soon...`);
     setTimeout(connect, 3000);
   });
 
