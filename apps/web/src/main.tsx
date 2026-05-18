@@ -1812,12 +1812,13 @@ function App() {
           return;
         }
         if (message.type === "job.created" || message.type === "job.updated") {
+          const status = typeof message.status === "string" ? message.status : "";
           if (typeof message.jobId === "string" && typeof message.status === "string") {
             applyJobStatusUpdate(message.jobId, message.status);
           }
           scheduleLoadAllJobs();
           if (message.jobId && activeJobIdRef.current === message.jobId) scheduleLoadJob(message.jobId);
-          if (activeChatIdRef.current) scheduleLoadChat(activeChatIdRef.current);
+          if (activeChatIdRef.current && (message.type === "job.created" || isTerminalJobStatus(status))) scheduleLoadChat(activeChatIdRef.current);
         }
       };
       ws.onclose = () => {

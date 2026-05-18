@@ -1916,8 +1916,9 @@ async function createApp(): Promise<FastifyInstance> {
         dispatchQueue(agent.id);
       }
       if (parsed.type === "job.log") {
+        const previous = db.prepare("SELECT status FROM jobs WHERE id = ?").get(parsed.jobId) as { status: string } | undefined;
         db.prepare("UPDATE jobs SET status='running', started_at=COALESCE(started_at, ?) WHERE id=?").run(nowIso(), parsed.jobId);
-        broadcast({ type: "job.updated", jobId: parsed.jobId, status: "running" });
+        if (previous?.status !== "running") broadcast({ type: "job.updated", jobId: parsed.jobId, status: "running" });
         appendLog({ job_id: parsed.jobId, stream: parsed.stream, message: parsed.message, at: parsed.at });
       }
       if (parsed.type === "job.progress") {
