@@ -3757,7 +3757,6 @@ function App() {
               })}
             </div>
           </div>
-          <button className="nav-item"><Activity size={17} /> Runs</button>
           <button className={view === "settings" ? "nav-item active" : "nav-item"} onClick={openSettingsView}><Settings size={17} /> Settings</button>
           <button className={view === "sync" ? "nav-item active" : "nav-item"} onClick={openSyncView}><PlugZap size={17} /> Sync</button>
           <button className={view === "profile" ? "nav-item active" : "nav-item"} onClick={openProfileView}><UserCircle size={17} /> Profile</button>
