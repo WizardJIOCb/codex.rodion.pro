@@ -1472,7 +1472,7 @@ async function createApp(): Promise<FastifyInstance> {
     if (!chat) return reply.code(404).send({ error: "not_found" });
     const rows = db.prepare("SELECT * FROM jobs WHERE chat_id = ? ORDER BY created_at DESC").all(chatId) as JobRow[];
     const messages = db.prepare("SELECT * FROM chat_messages WHERE chat_id = ? ORDER BY created_at ASC").all(chatId) as ChatMessageRow[];
-    return { chat: serializeChat(chat), jobs: rows.map(serializeJob), messages: messages.map((message) => serializeMessage(message)) };
+    return { chat: serializeChat(chat), jobs: rows.map(serializeJob), messages: messages.map((message) => serializeMessage(message, { includeData: true })) };
   });
 
   app.get("/api/job-attachments/:id", async (request, reply) => {

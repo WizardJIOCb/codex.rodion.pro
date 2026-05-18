@@ -305,10 +305,13 @@ function api(path: string, options: RequestInit = {}) {
       "Content-Type": "application/json",
       ...(options.headers ?? {})
     }
-  }).catch(() => new Response(JSON.stringify({ error: "network_error" }), {
-    status: 503,
-    headers: { "Content-Type": "application/json" }
-  }));
+  }).catch((error) => {
+    if (isAbortError(error)) throw error;
+    return new Response(JSON.stringify({ error: "network_error" }), {
+      status: 503,
+      headers: { "Content-Type": "application/json" }
+    });
+  });
 }
 
 function isAbortError(error: unknown) {
