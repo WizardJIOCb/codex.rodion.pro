@@ -213,6 +213,14 @@ type PendingAttachment = {
   previewUrl?: string;
 };
 
+type ChatLoadingProgress = {
+  phase: "request" | "download" | "parse" | "details";
+  loadedBytes: number;
+  totalBytes?: number;
+  percent?: number;
+  startedAt: number;
+};
+
 type Job = {
   id: string;
   chatId?: string | null;
@@ -317,6 +325,19 @@ function api(path: string, options: RequestInit = {}) {
 function isAbortError(error: unknown) {
   return error instanceof DOMException && error.name === "AbortError"
     || error instanceof Error && error.name === "AbortError";
+}
+
+function progressPercent(progress: ChatLoadingProgress | null) {
+  if (!progress) return 0;
+  if (typeof progress.percent === "number") return Math.max(0, Math.min(100, Math.round(progress.percent)));
+  return 0;
+}
+
+function chatLoadingPhaseLabel(phase: ChatLoadingProgress["phase"]) {
+  if (phase === "request") return "Соединяюсь с сервером";
+  if (phase === "download") return "Загружаю историю";
+  if (phase === "parse") return "Собираю сообщения";
+  return "Подтягиваю детали запуска";
 }
 
 function defaultProjectPath(name: string) {
@@ -971,6 +992,7 @@ function App() {
   const [repoKey, setRepoKey] = useState("");
   const [activeChatId, setActiveChatId] = useState("");
   const [chatLoadingId, setChatLoadingId] = useState("");
+  const [chatLoadingProgress, setChatLoadingProgress] = useState<ChatLoadingProgress | null>(null);
   const [sandbox, setSandbox] = useState<Sandbox>("danger-full-access");
   const [busy, setBusy] = useState(false);
   const [projectPanel, setProjectPanel] = useState<"new" | "settings" | null>(null);
@@ -1040,6 +1062,9 @@ function App() {
   const selectedRepo = useMemo(() => repos.find((repo) => `${repo.agentId}:${repo.id}` === repoKey), [repoKey, repos]);
   const activeChat = useMemo(() => chats.find((chat) => chat.id === activeChatId), [activeChatId, chats]);
   const chatIsLoading = Boolean(activeChatId && chatLoadingId === activeChatId);
+  const chatLoadingPercent = progressPercent(chatLoadingProgress);
+  const chatLoadingDeterminate = Boolean(chatLoadingProgress?.totalBytes);
+  const chatLoadingLabel = chatLoadingProgress ? chatLoadingPhaseLabel(chatLoadingProgress.phase) : "Загружаю чат";
   const selectedAgent = agents.find((agent) => agent.status === "online") ?? agents[0];
   const online = agents.some((agent) => agent.status === "online");
   const localActivity = selectedAgent?.localActivity;
@@ -1278,6 +1303,7 @@ function App() {
       if (activeChatId && !nextChats.some((chat: Chat) => chat.id === activeChatId)) {
         setActiveChatId("");
         setChatLoadingId("");
+        setChatLoadingProgress(null);
         setJobs([]);
         setMessages([]);
         setActiveJob(null);
@@ -1299,23 +1325,59 @@ function App() {
     loadChatAbortRef.current?.abort();
     const controller = new AbortController();
     loadChatAbortRef.current = controller;
+    const loadingStartedAt = Date.now();
     if (showLoader) {
       setActiveChatId(chatId);
       setChatLoadingId(chatId);
+      setChatLoadingProgress({ phase: "request", loadedBytes: 0, percent: 4, startedAt: loadingStartedAt });
       setChatNotice("");
     }
     try {
-      const response = await api(`/api/chats/${chatId}`, { signal: controller.signal });
+      const response = await fetch(`/api/chats/${chatId}`, { signal: controller.signal });
       if (loadChatAbortRef.current !== controller) return;
       if (!response.ok) {
         loadChatAbortRef.current = null;
         setChatLoadingId((current) => current === chatId ? "" : current);
+        setChatLoadingProgress((current) => current?.startedAt === loadingStartedAt ? null : current);
         return;
       }
-      const data = await response.json();
+      const totalHeader = Number(response.headers.get("content-length") ?? 0);
+      const totalBytes = Number.isFinite(totalHeader) && totalHeader > 0 ? totalHeader : undefined;
+      let loadedBytes = 0;
+      let responseText = "";
+      if (response.body) {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (loadChatAbortRef.current !== controller) return;
+          loadedBytes += value.byteLength;
+          responseText += decoder.decode(value, { stream: true });
+          if (showLoader) {
+            const downloadPercent = totalBytes ? 8 + Math.min(82, (loadedBytes / totalBytes) * 82) : undefined;
+            setChatLoadingProgress({
+              phase: "download",
+              loadedBytes,
+              totalBytes,
+              percent: downloadPercent,
+              startedAt: loadingStartedAt
+            });
+          }
+        }
+        responseText += decoder.decode();
+      } else {
+        responseText = await response.text();
+        loadedBytes = new Blob([responseText]).size;
+        if (showLoader) {
+          setChatLoadingProgress({ phase: "download", loadedBytes, totalBytes, percent: totalBytes ? 90 : undefined, startedAt: loadingStartedAt });
+        }
+      }
+      if (loadChatAbortRef.current !== controller) return;
+      if (showLoader) setChatLoadingProgress({ phase: "parse", loadedBytes, totalBytes, percent: 92, startedAt: loadingStartedAt });
+      const data = JSON.parse(responseText);
       if (loadChatAbortRef.current !== controller) return;
       loadChatAbortRef.current = null;
-      setChatLoadingId((current) => current === chatId ? "" : current);
       setChats((current) => {
         const withoutLoaded = current.filter((chat) => chat.id !== data.chat.id);
         return [data.chat, ...withoutLoaded].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
@@ -1325,15 +1387,21 @@ function App() {
       setAllJobs((current) => mergeJobs(current, data.jobs));
       setMessages(data.messages ?? []);
       const targetJobId = preferredJobId ?? data.jobs[0]?.id;
-      if (targetJobId) await loadJob(targetJobId);
+      if (targetJobId) {
+        if (showLoader) setChatLoadingProgress({ phase: "details", loadedBytes, totalBytes, percent: 96, startedAt: loadingStartedAt });
+        await loadJob(targetJobId);
+      }
       else {
         setActiveJob(null);
         setLogs([]);
       }
+      setChatLoadingId((current) => current === chatId ? "" : current);
+      setChatLoadingProgress((current) => current?.startedAt === loadingStartedAt ? null : current);
     } catch (error) {
       if (loadChatAbortRef.current === controller) {
         loadChatAbortRef.current = null;
         setChatLoadingId((current) => current === chatId ? "" : current);
+        setChatLoadingProgress((current) => current?.startedAt === loadingStartedAt ? null : current);
       }
       if (!isAbortError(error)) throw error;
     }
@@ -1411,6 +1479,7 @@ function App() {
     setSslNotice("");
     setActiveChatId("");
     setChatLoadingId("");
+    setChatLoadingProgress(null);
     setJobs([]);
     setMessages([]);
     setActiveJob(null);
@@ -1428,6 +1497,7 @@ function App() {
     setChats([]);
     setActiveChatId("");
     setChatLoadingId("");
+    setChatLoadingProgress(null);
     setJobs([]);
     setMessages([]);
     setActiveJob(null);
@@ -1448,6 +1518,7 @@ function App() {
     setRepoKey("");
     setActiveChatId("");
     setChatLoadingId("");
+    setChatLoadingProgress(null);
     setJobs([]);
     setMessages([]);
     setActiveJob(null);
@@ -1462,6 +1533,7 @@ function App() {
     setRepoKey("");
     setActiveChatId("");
     setChatLoadingId("");
+    setChatLoadingProgress(null);
     setJobs([]);
     setMessages([]);
     setActiveJob(null);
@@ -1937,6 +2009,7 @@ function App() {
     if (activeChatId === chat.id) {
       setActiveChatId("");
       setChatLoadingId("");
+      setChatLoadingProgress(null);
       setJobs([]);
       setMessages([]);
       setActiveJob(null);
@@ -3067,7 +3140,17 @@ function App() {
                             <RefreshCw className="spin" size={22} />
                           </span>
                           <strong>Загружаю чат</strong>
-                          <small>Подтягиваю сообщения, запуски и детали выполнения.</small>
+                          <small>{chatLoadingLabel}</small>
+                          <div className={`chat-loading-progress ${chatLoadingDeterminate ? "" : "indeterminate"}`} aria-label="Прогресс загрузки чата">
+                            <span style={chatLoadingDeterminate ? { width: `${chatLoadingPercent}%` } : undefined} />
+                          </div>
+                          <small>
+                            {chatLoadingProgress?.loadedBytes
+                              ? chatLoadingProgress.totalBytes
+                                ? `${formatBytes(chatLoadingProgress.loadedBytes)} из ${formatBytes(chatLoadingProgress.totalBytes)} · ${chatLoadingPercent}%`
+                                : `Получено ${formatBytes(chatLoadingProgress.loadedBytes)}`
+                              : "Ожидаю ответ сервера"}
+                          </small>
                         </div>
                       ) : timelineItems.length ? timelineItems.map((item, index) => {
                         const { message, collapsedRun } = item;
