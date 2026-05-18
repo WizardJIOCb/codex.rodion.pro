@@ -1165,7 +1165,7 @@ function App() {
   );
   const localCodexBusy = rawLocalCodexBusy || localBusyHold.until > nowTick;
   const localBusySince = rawLocalCodexBusy
-    ? localActivity?.busySinceAt || localBusyHold.since || localActivity?.updatedAt || localActivity?.detectedAt
+    ? localBusyHold.since || localActivity?.busySinceAt || localActivity?.updatedAt || localActivity?.detectedAt
     : localBusyHold.since;
   const thinkingSince = activeRunBusy
     ? activeJob?.startedAt || activeJob?.createdAt
