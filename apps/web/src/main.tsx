@@ -2761,8 +2761,8 @@ function App() {
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
       setSyncNotice(data.error === "agent_online"
-        ? "Агент уже online: новый start-agent.bat не нужен."
-        : data.error || "Не получилось подготовить start-agent.bat.");
+        ? "Агент уже online: новый setup-agent.bat не нужен."
+        : data.error || "Не получилось подготовить setup-agent.bat.");
       return;
     }
     const setup = data.setup as AgentSetup | undefined;
@@ -2771,8 +2771,8 @@ function App() {
       return;
     }
     setAgentSetup(setup);
-    downloadTextFile(setup.setupFileName || "start-agent.bat", setup.setupBatch || setup.setupPowerShell, "application/x-bat;charset=utf-8");
-    setSyncNotice("Скачал start-agent.bat. Запусти его на домашнем Windows ПК после установки Git, Node.js LTS и Codex CLI.");
+    downloadTextFile(setup.setupFileName || "setup-agent.bat", setup.setupBatch || setup.setupPowerShell, "application/x-bat;charset=utf-8");
+    setSyncNotice("Скачал setup-agent.bat. Запусти его на домашнем Windows ПК после установки Git, Node.js LTS и Codex CLI.");
     await refresh();
   }
 
@@ -2984,11 +2984,11 @@ function App() {
           {agentSetup && (
             <div className="settings-card">
               <h2>Windows setup</h2>
-              <p>На ПК пользователя: установи Node.js LTS, Git, Codex CLI, выполни <code>codex login</code>, затем запусти скачанный <code>start-agent.bat</code>.</p>
+              <p>На ПК пользователя: установи Node.js LTS, Git, Codex CLI, выполни <code>codex login</code>, затем запусти скачанный <code>setup-agent.bat</code>.</p>
               <button className="secondary" type="button" onClick={() => (
-                downloadTextFile(agentSetup.setupFileName || "start-agent.bat", agentSetup.setupBatch || agentSetup.setupPowerShell, "application/x-bat;charset=utf-8")
+                downloadTextFile(agentSetup.setupFileName || "setup-agent.bat", agentSetup.setupBatch || agentSetup.setupPowerShell, "application/x-bat;charset=utf-8")
               )}>
-                <Download size={16} /> Download start-agent.bat
+                <Download size={16} /> Download setup-agent.bat
               </button>
               <textarea className="code-textarea" readOnly value={agentSetup.setupPowerShell} />
               <label>
@@ -3046,8 +3046,8 @@ function App() {
     const bridgeReady = vscodeNotice && !/failed|agent_offline|timeout|ошибка|не удалось/i.test(vscodeNotice);
     const syncNoticeOk = /прошла|скачал|online/i.test(syncNotice);
     const setupButtonLabel = selectedAgent
-      ? selectedAgent.status === "online" ? "Агент уже online" : "Скачать новый start-agent.bat"
-      : "Создать агента и скачать start-agent.bat";
+      ? selectedAgent.status === "online" ? "Агент уже online" : "Скачать новый setup-agent.bat"
+      : "Создать агента и скачать setup-agent.bat";
     const statusRows = [
       {
         label: "Web service",
@@ -3093,7 +3093,7 @@ function App() {
             <div>
               <h2><Download size={18} /> Windows agent setup</h2>
               <p>
-                Скачай персональный <code>start-agent.bat</code>, запусти его на домашнем Windows ПК и дождись статуса online.
+                Скачай персональный <code>setup-agent.bat</code>, запусти его на домашнем Windows ПК и дождись статуса online.
                 Если файл потерян, кнопка выпустит новый токен для offline-агента.
               </p>
             </div>

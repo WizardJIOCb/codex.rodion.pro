@@ -1088,16 +1088,31 @@ function agentSetupPayload(request: { protocol: string; hostname: string }, agen
   const setupBatch = [
     "@echo off",
     "setlocal",
-    "set \"CODEX_AGENT_SETUP_BAT=%~f0\"",
-    "powershell -NoProfile -ExecutionPolicy Bypass -Command \"$ErrorActionPreference='Stop'; $raw=[IO.File]::ReadAllText($env:CODEX_AGENT_SETUP_BAT); $marker='# POWERSHELL-SETUP'; $idx=$raw.IndexOf($marker); if ($idx -lt 0) { throw 'Setup payload not found.' }; $script=$raw.Substring($idx); & ([ScriptBlock]::Create($script))\"",
+    "set \"CODEX_AGENT_ROOT=%USERPROFILE%\\codex.rodion.pro\"",
+    `set "CODEX_AGENT_TOKEN=${token}"`,
+    `set "CODEX_AGENT_CONFIG_B64=${encodedConfig}"`,
+    "",
+    "powershell -NoProfile -ExecutionPolicy Bypass -Command ^",
+    "  \"$ErrorActionPreference='Stop'; \" ^",
+    "  \"$root=$env:CODEX_AGENT_ROOT; \" ^",
+    "  \"if (-not (Get-Command git.exe -ErrorAction SilentlyContinue)) { throw 'Install Git for Windows first.' }; \" ^",
+    "  \"if (-not (Get-Command node.exe -ErrorAction SilentlyContinue)) { throw 'Install Node.js LTS first.' }; \" ^",
+    "  \"if (-not (Get-Command codex.cmd -ErrorAction SilentlyContinue)) { throw 'Install Codex CLI and run: codex login' }; \" ^",
+    "  \"if (-not (Test-Path $root)) { git clone https://github.com/WizardJIOCb/codex.rodion.pro.git $root }; \" ^",
+    "  \"if (-not (Test-Path (Join-Path $root '.git'))) { throw ($root + ' exists but is not a codex.rodion.pro checkout.') }; \" ^",
+    "  \"Set-Location $root; \" ^",
+    "  \"corepack enable; \" ^",
+    "  \"corepack pnpm install; \" ^",
+    "  \"corepack pnpm build; \" ^",
+    "  \"[Environment]::SetEnvironmentVariable('CMC_AGENT_TOKEN',$env:CODEX_AGENT_TOKEN,'User'); \" ^",
+    "  \"$config=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:CODEX_AGENT_CONFIG_B64)); \" ^",
+    "  \"$config | Set-Content -Path (Join-Path $root 'apps\\agent-windows\\agent.config.json') -Encoding UTF8; \" ^",
+    "  \"& (Join-Path $root 'start-agent.bat')\"",
     "set \"CODEX_AGENT_SETUP_EXIT=%ERRORLEVEL%\"",
     "pause",
-    "exit /b %CODEX_AGENT_SETUP_EXIT%",
-    "",
-    "# POWERSHELL-SETUP",
-    setupPowerShell
+    "exit /b %CODEX_AGENT_SETUP_EXIT%"
   ].join("\r\n");
-  return { agentId, serverUrl, token, configJson, setupPowerShell, setupBatch, setupFileName: "start-agent.bat" };
+  return { agentId, serverUrl, token, configJson, setupPowerShell, setupBatch, setupFileName: "setup-agent.bat" };
 }
 
 async function tokenRequest(url: string, params: Record<string, string>, headers: Record<string, string> = {}): Promise<Record<string, unknown>> {
