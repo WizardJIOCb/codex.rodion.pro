@@ -1598,6 +1598,7 @@ function App() {
 
   function selectProject(repo: Repo) {
     setMobileMenuOpen(false);
+    setView("projects");
     setRepoKey(`${repo.agentId}:${repo.id}`);
     setSandbox(repo.defaultSandbox);
     setGitMessage(`Update ${repo.name}`);
@@ -3111,6 +3112,7 @@ function App() {
                               return (
                             <button className="nav-leaf chat-child" onClick={() => {
                               setMobileMenuOpen(false);
+                              setView("projects");
                               loadChat(chat.id, undefined, true).catch(() => undefined);
                             }}>
                               <span className="nav-chat-title">
