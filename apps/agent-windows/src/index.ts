@@ -433,7 +433,7 @@ async function runLocalChatSync(reason: string, send: (message: AgentToServer) =
       sent += 1;
       send(message);
     });
-    if (reason !== "interval") {
+    if (reason === "connect" || reason.startsWith("queued:")) {
       console.log(`Local chat sync completed (${reason}): ${sent} chats in ${Date.now() - startedAt}ms`);
     }
   } catch (error) {
