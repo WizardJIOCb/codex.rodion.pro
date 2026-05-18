@@ -571,21 +571,25 @@ function messageDurationSeconds(message: ChatMessage) {
   return Math.max(0, Math.floor((finishedAt - startedAt) / 1000));
 }
 
-function messageRunDetailParts(message: ChatMessage, job: Job | undefined, collapsedRun?: CollapsedRunSummary) {
+function messageRunDetails(message: ChatMessage, job: Job | undefined, collapsedRun?: CollapsedRunSummary) {
+  const runJob = job ?? collapsedRun?.job;
   const metadataModel = typeof message.metadata?.model === "string" ? message.metadata.model : "";
   const metadataReasoning = typeof message.metadata?.reasoningEffort === "string" ? message.metadata.reasoningEffort : "";
   const metadataSpeed = typeof message.metadata?.speed === "string" ? message.metadata.speed : "";
-  const model = job?.model || metadataModel;
-  const reasoning = job?.reasoningEffort || metadataReasoning;
-  const speed = job?.speed || metadataSpeed;
-  const durationSeconds = collapsedRun?.durationSeconds ?? (job?.finishedAt ? jobDurationSeconds(job) : messageDurationSeconds(message));
-  return [
+  const model = runJob?.model || metadataModel;
+  const reasoning = runJob?.reasoningEffort || metadataReasoning;
+  const speed = runJob?.speed || metadataSpeed;
+  const durationSeconds = collapsedRun?.durationSeconds ?? (runJob?.finishedAt ? jobDurationSeconds(runJob) : messageDurationSeconds(message));
+  const settings = [
     model ? CODEX_MODEL_OPTIONS.find((option) => option.value === model)?.label ?? model : "",
     reasoning ? `Intelligence ${REASONING_OPTIONS.find((option) => option.value === reasoning)?.label ?? reasoning}` : "",
-    speed ? `Speed ${SPEED_OPTIONS.find((option) => option.value === speed)?.label ?? speed}` : "",
+    speed ? `Speed ${SPEED_OPTIONS.find((option) => option.value === speed)?.label ?? speed}` : ""
+  ].filter(Boolean);
+  const timing = [
     new Date(message.createdAt).toLocaleString(),
     durationSeconds > 0 ? `Работал ${formatDuration(durationSeconds)}` : ""
   ].filter(Boolean);
+  return { settings, timing };
 }
 
 function parseCommandOutput(output: string) {
@@ -3356,8 +3360,8 @@ function App() {
                         const isLast = index === timelineItems.length - 1;
                         const author = message.role === "user" ? "You" : message.source === "vscode" ? "VS Code" : "Codex";
                         const assistantDetails = message.role === "assistant" || message.role === "tool" || message.role === "system"
-                          ? messageRunDetailParts(message, messageJob, collapsedRun)
-                          : [];
+                          ? messageRunDetails(message, messageJob, collapsedRun)
+                          : undefined;
                         return (
                           <article
                             className={`message ${message.role}${isNew ? " new-message" : ""}`}
@@ -3368,10 +3372,13 @@ function App() {
                             } : undefined}
                           >
                             <div className="message-meta">
-                              {assistantDetails.length ? (
+                              {assistantDetails ? (
                                 <div className="message-author-stack">
-                                  <span>{author}</span>
-                                  <small>{assistantDetails.join(" · ")}</small>
+                                  <span>
+                                    {author}
+                                    {assistantDetails.settings.length > 0 && <small className="message-run-settings">{assistantDetails.settings.join(" · ")}</small>}
+                                  </span>
+                                  {assistantDetails.timing.length > 0 && <small>{assistantDetails.timing.join(" · ")}</small>}
                                 </div>
                               ) : (
                                 <>
