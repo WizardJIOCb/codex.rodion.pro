@@ -1652,14 +1652,8 @@ function App() {
     setMobileMenuOpen(false);
     setView("settings");
     setProjectPanel(null);
-    setRepoKey("");
-    setActiveChatId("");
-    setChatLoadingId("");
-    setChatLoadingProgress(null);
-    setJobs([]);
-    setMessages([]);
-    setActiveJob(null);
-    setLogs([]);
+    setChatProperties(null);
+    setChatMenuId("");
     loadUsers();
   }
 
@@ -1667,14 +1661,8 @@ function App() {
     setMobileMenuOpen(false);
     setView("profile");
     setProjectPanel(null);
-    setRepoKey("");
-    setActiveChatId("");
-    setChatLoadingId("");
-    setChatLoadingProgress(null);
-    setJobs([]);
-    setMessages([]);
-    setActiveJob(null);
-    setLogs([]);
+    setChatProperties(null);
+    setChatMenuId("");
     setProfileNotice("");
     loadProfile();
   }
