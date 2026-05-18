@@ -752,6 +752,12 @@ function upsertSyncedChat(agentId: string, sync: Extract<AgentToServer, { type: 
     : undefined;
   let chat = db.prepare("SELECT * FROM chats WHERE agent_id = ? AND source = ? AND external_id = ?")
     .get(agentId, sync.source, sync.externalId) as ChatRow | undefined;
+  const latestSyncedMessage = sync.messages.at(-1);
+  if (!linkedChat && chat && chat.updated_at === sync.updatedAt && latestSyncedMessage?.externalId) {
+    const latestExists = db.prepare("SELECT 1 FROM chat_messages WHERE chat_id = ? AND source = ? AND external_id = ?")
+      .get(chat.id, latestSyncedMessage.source, latestSyncedMessage.externalId) as { 1: number } | undefined;
+    if (latestExists) return;
+  }
   if (linkedChat) {
     if (chat && chat.id !== linkedChat.id) {
       db.prepare("DELETE FROM chats WHERE id = ?").run(chat.id);
@@ -1644,7 +1650,7 @@ async function createApp(): Promise<FastifyInstance> {
     return {
       chat: serializeChat(chat),
       jobs: rows.map((row) => serializeJob(row, { includeDiff: false })),
-      messages: serializeMessagesForChat(chatId, messages, { includeData: true, lightMetadata: true })
+      messages: serializeMessagesForChat(chatId, messages, { lightMetadata: true })
     };
   });
 

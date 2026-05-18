@@ -1471,6 +1471,7 @@ function App() {
       if (!response.ok) {
         loadChatAbortRef.current = null;
         clearChatLoader(chatId, loadingStartedAt);
+        if (showLoader) setChatNotice("Не удалось загрузить чат. Попробуй открыть его ещё раз.");
         return;
       }
       const totalHeader = Number(response.headers.get("content-length") ?? 0);
@@ -1540,7 +1541,10 @@ function App() {
         loadChatInFlightRef.current = null;
       }
       clearChatLoader(chatId, loadingStartedAt);
-      if (!isAbortError(error)) throw error;
+      if (!isAbortError(error)) {
+        if (showLoader) setChatNotice("Загрузка чата прервалась. Попробуй открыть его ещё раз.");
+        throw error;
+      }
     } finally {
       window.clearTimeout(timeout);
       if (loadChatAbortRef.current === controller) loadChatAbortRef.current = null;
@@ -1584,6 +1588,8 @@ function App() {
   }
 
   function scheduleLoadChat(chatId: string) {
+    const currentLoad = loadChatInFlightRef.current;
+    if (currentLoad?.chatId === chatId && currentLoad.foreground) return;
     if (loadChatTimerRef.current) window.clearTimeout(loadChatTimerRef.current);
     loadChatTimerRef.current = window.setTimeout(() => {
       loadChat(chatId).catch(() => undefined);
