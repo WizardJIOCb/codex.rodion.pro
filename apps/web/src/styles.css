@@ -544,14 +544,28 @@ textarea:focus {
 
 .topbar {
   min-height: 54px;
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
   gap: 10px;
   padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.9);
+}
+
+.top-nav-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.top-title {
+  min-width: 0;
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  text-align: center;
 }
 
 .sidebar-toggle {
@@ -1386,7 +1400,7 @@ button.message-attachment.image:hover {
   gap: 10px;
   align-items: start;
   min-width: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 h2 {
@@ -2551,7 +2565,12 @@ button:disabled {
   }
 
   .topbar {
-    justify-content: flex-start;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .top-title {
+    justify-items: start;
+    text-align: left;
   }
 
   .topbar > div {

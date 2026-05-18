@@ -3114,18 +3114,20 @@ function App() {
 
       <section className="shell" ref={shellRef} onScroll={updateChatBottomState}>
       <header className="topbar">
-        <button
-          className="icon sidebar-toggle"
-          type="button"
-          onClick={() => setSidebarCollapsed((value) => !value)}
-          title={sidebarCollapsed ? "Показать боковую панель" : "Скрыть боковую панель"}
-        >
-          {sidebarCollapsed ? <PanelLeftOpen size={19} /> : <PanelLeftClose size={19} />}
-        </button>
-        <button className="icon mobile-menu-toggle" type="button" onClick={() => setMobileMenuOpen(true)} title="Меню">
-          <Menu size={19} />
-        </button>
-        <div>
+        <div className="top-nav-controls">
+          <button
+            className="icon sidebar-toggle"
+            type="button"
+            onClick={() => setSidebarCollapsed((value) => !value)}
+            title={sidebarCollapsed ? "Показать боковую панель" : "Скрыть боковую панель"}
+          >
+            {sidebarCollapsed ? <PanelLeftOpen size={19} /> : <PanelLeftClose size={19} />}
+          </button>
+          <button className="icon mobile-menu-toggle" type="button" onClick={() => setMobileMenuOpen(true)} title="Меню">
+            <Menu size={19} />
+          </button>
+        </div>
+        <div className="top-title">
           <span className={`status ${online ? "ok" : "bad"}`}>{online ? <Wifi size={16} /> : <WifiOff size={16} />} {online ? "Home PC online" : "Home PC offline"}</span>
           <h1>{view === "settings" ? "Settings" : view === "profile" ? "Profile" : selectedRepo ? selectedRepo.name : "Projects"}</h1>
         </div>
