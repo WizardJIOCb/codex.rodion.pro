@@ -1815,9 +1815,16 @@ function App() {
       }));
       return;
     }
+    if ((localFinalMessageLikelySeen || staleCurrentWebJob || staleLocalWebBusy) && localBusyHold.since) {
+      setLocalBusyHold({ until: 0 });
+      return;
+    }
     if (localBusyHold.until <= now && localBusyHold.since) setLocalBusyHold({ until: 0 });
   }, [
     rawLocalCodexBusy,
+    localFinalMessageLikelySeen,
+    staleCurrentWebJob,
+    staleLocalWebBusy,
     localActivity?.busySinceAt,
     localActivity?.updatedAt,
     localActivity?.detectedAt,
