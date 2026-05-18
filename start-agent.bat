@@ -4,6 +4,13 @@ cd /d "%~dp0"
 
 if not exist "data" mkdir "data"
 
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\prepare-vscode-bridge.ps1"
+if errorlevel 1 (
+  echo Failed to prepare VS Code bridge.
+  pause
+  exit /b 1
+)
+
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$root=(Resolve-Path '.').Path; " ^
   "$running=Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -like '*apps/agent-windows/dist/index.js*' -and $_.CommandLine -like '*apps/agent-windows/agent.config.json*' }; " ^
