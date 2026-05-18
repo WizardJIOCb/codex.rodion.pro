@@ -1049,6 +1049,21 @@ function App() {
       : undefined;
   const thinkingSeconds = thinkingSince ? Math.max(0, Math.floor((nowTick - Date.parse(thinkingSince)) / 1000)) : 0;
   const busyChatIds = useMemo(() => new Set(runningJobs.map((job) => job.chatId).filter((chatId): chatId is string => Boolean(chatId))), [runningJobs]);
+  const activeBusyChatIds = useMemo(() => {
+    const ids = new Set(busyChatIds);
+    const activeJobInSelectedRepo = Boolean(
+      activeJob
+      && activeRunBusy
+      && selectedRepo
+      && activeJob.agentId === selectedRepo.agentId
+      && activeJob.repoId === selectedRepo.id
+    );
+    if (activeJobInSelectedRepo) {
+      const chatId = activeJob?.chatId || activeChatId;
+      if (chatId) ids.add(chatId);
+    }
+    return ids;
+  }, [activeChatId, activeJob, activeRunBusy, busyChatIds, selectedRepo]);
   const localBusyRepoKey = localCodexBusy && localActivity?.repoId && selectedAgent?.id
     ? `${selectedAgent.id}:${localActivity.repoId}`
     : "";
@@ -2730,7 +2745,7 @@ function App() {
                         {chats.map((chat) => (
                           <div className={activeChatId === chat.id ? "nav-chat-row active" : "nav-chat-row"} key={chat.id}>
                             {(() => {
-                              const chatIsBusy = busyChatIds.has(chat.id)
+                              const chatIsBusy = activeBusyChatIds.has(chat.id)
                                 || (localBusyRepoKey === currentRepoKey && localBusyChatTitle === chat.title)
                                 || (localBusyRepoKey === currentRepoKey && localBusyFallbackChatId === chat.id);
                               return (
