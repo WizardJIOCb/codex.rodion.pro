@@ -2559,7 +2559,7 @@ function App() {
     const rows = exactRows.length ? exactRows : diffRows(stat || null, progress?.files);
     const summary = exactRows.length ? diffSummaryFromRows(exactRows) : diffSummary(stat || null, progress);
     const actionKey = `changes:${message.id}`;
-    const expanded = Boolean(expandedActions[actionKey]);
+    const fileListVisible = expandedActions[actionKey] !== false;
     const durationSeconds = job?.finishedAt ? jobDurationSeconds(job) : messageDurationSeconds(message);
     return (
       <div className="codex-change-card">
@@ -2576,10 +2576,10 @@ function App() {
             </div>
           </div>
           <button type="button" onClick={() => expandChangeCard(actionKey, message, job)}>
-            {expanded ? "Hide" : "Details"}
+            {fileListVisible ? "Hide" : "Details"}
           </button>
         </div>
-        {expanded && rows.length ? (
+        {fileListVisible && rows.length ? (
           <div className="codex-change-files">
             {rows.map((row) => {
               const fileDiff = findFileDiffInList(fileDiffs, row.file);
@@ -2604,7 +2604,7 @@ function App() {
               );
             })}
           </div>
-        ) : expanded ? (
+        ) : fileListVisible ? (
           <div className="codex-change-empty">No files changed.</div>
         ) : null}
       </div>
