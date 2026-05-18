@@ -1101,7 +1101,7 @@ function App() {
   const staleCurrentWebJob = Boolean(selectedAgent?.current_job_id && selectedAgent.current_job_id === activeJob?.id && !activeRunBusy);
   const staleLocalWebBusy = Boolean(localActivity?.source === "codex.rodion.pro" && !activeRunBusy && activeJob?.finishedAt);
   const latestLocalAssistantMessageAt = Math.max(0, ...messages
-    .filter((message) => message.role === "assistant" && (message.source === "codex" || message.source === "vscode"))
+    .filter((message) => message.role === "assistant")
     .map((message) => Date.parse(message.createdAt))
     .filter(Number.isFinite));
   const localFinalMessageLikelySeen = Boolean(
