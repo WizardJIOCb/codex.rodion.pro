@@ -1,0 +1,35 @@
+{
+  "name": "@cmc/vscode-bridge",
+  "displayName": "codex.rodion.pro VS Code Bridge",
+  "description": "Local VS Code companion bridge for codex.rodion.pro.",
+  "version": "0.0.1",
+  "publisher": "local",
+  "private": true,
+  "type": "commonjs",
+  "engines": {
+    "vscode": "^1.96.2"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "codexRodionBridge.restart",
+        "title": "codex.rodion.pro: Restart VS Code Bridge"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.21",
+    "typescript": "^5.8.3"
+  }
+}

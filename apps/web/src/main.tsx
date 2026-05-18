@@ -1100,6 +1100,8 @@ function App() {
   const [nginxBusy, setNginxBusy] = useState(false);
   const [sslNotice, setSslNotice] = useState("");
   const [sslBusy, setSslBusy] = useState(false);
+  const [vscodeNotice, setVscodeNotice] = useState("");
+  const [vscodeBusy, setVscodeBusy] = useState(false);
   const [chatNotice, setChatNotice] = useState("");
   const [projectNotice, setProjectNotice] = useState("");
   const [attachmentNotice, setAttachmentNotice] = useState("");
@@ -2364,6 +2366,25 @@ function App() {
     await refresh();
   }
 
+  async function runVscodeCommand(command: "ping" | "openSidebar" | "newChat" | "newCodexPanel" | "addToThread") {
+    if (!selectedRepo || !csrf) return;
+    setVscodeBusy(true);
+    setActionMenuOpen(false);
+    setVscodeNotice("VS Code bridge command sent...");
+    const response = await api(`/api/agents/${selectedRepo.agentId}/vscode-command`, {
+      method: "POST",
+      headers: { "x-csrf-token": csrf },
+      body: JSON.stringify({ command })
+    });
+    const data = await response.json().catch(() => ({}));
+    setVscodeBusy(false);
+    if (!response.ok) {
+      setVscodeNotice(data.output || data.error || "VS Code bridge command failed.");
+      return;
+    }
+    setVscodeNotice(data.output || "VS Code bridge command completed.");
+  }
+
   async function syncGit(event: React.FormEvent) {
     event.preventDefault();
     await runGitSync();
@@ -3027,6 +3048,18 @@ function App() {
                   <UploadCloud size={16} />
                   <span>Commit & push</span>
                 </button>
+                <button disabled={vscodeBusy} role="menuitem" type="button" onClick={() => runVscodeCommand("openSidebar")}>
+                  <PanelLeftOpen size={16} />
+                  <span>Open VS Code Codex</span>
+                </button>
+                <button disabled={vscodeBusy} role="menuitem" type="button" onClick={() => runVscodeCommand("newChat")}>
+                  <MessageSquare size={16} />
+                  <span>New VS Code chat</span>
+                </button>
+                <button disabled={vscodeBusy} role="menuitem" type="button" onClick={() => runVscodeCommand("addToThread")}>
+                  <Plus size={16} />
+                  <span>Add current context</span>
+                </button>
                 <div className="menu-divider" />
                 <div className="menu-section">
                   <span className="menu-section-title">Intelligence</span>
@@ -3082,6 +3115,7 @@ function App() {
                 <div className="menu-summary">
                   {selectedModelLabel} · {selectedReasoningLabel} · {selectedSpeedLabel}
                 </div>
+                {vscodeNotice && <div className="menu-summary">{vscodeNotice}</div>}
               </div>
             )}
           </div>

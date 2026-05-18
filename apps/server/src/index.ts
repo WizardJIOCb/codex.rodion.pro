@@ -21,6 +21,7 @@ import {
   RegisterSchema,
   SslSchema,
   UpdateProjectSchema,
+  VscodeCommandRequestSchema,
   type AgentToServer,
   type LocalCodexActivity,
   type RepoInfo,
@@ -100,6 +101,11 @@ const nginxRequests = new Map<string, {
 }>();
 const sslRequests = new Map<string, {
   resolve: (value: Extract<AgentToServer, { type: "ssl.result" }>) => void;
+  reject: (error: Error) => void;
+  timer: NodeJS.Timeout;
+}>();
+const vscodeRequests = new Map<string, {
+  resolve: (value: Extract<AgentToServer, { type: "vscode.result" }>) => void;
   reject: (error: Error) => void;
   timer: NodeJS.Timeout;
 }>();
@@ -378,6 +384,22 @@ function requestAgentSsl(
       reject(new Error("agent_timeout"));
     }, 300000);
     sslRequests.set(message.requestId, { resolve, reject, timer });
+    agent.send(message);
+  });
+}
+
+function requestAgentVscode(
+  agentId: string,
+  message: Extract<ServerToAgent, { type: "vscode.command" }>
+): Promise<Extract<AgentToServer, { type: "vscode.result" }>> {
+  const agent = agents.get(agentId);
+  if (!agent) return Promise.reject(new Error("agent_offline"));
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      vscodeRequests.delete(message.requestId);
+      reject(new Error("agent_timeout"));
+    }, 15000);
+    vscodeRequests.set(message.requestId, { resolve, reject, timer });
     agent.send(message);
   });
 }
@@ -1543,6 +1565,28 @@ async function createApp(): Promise<FastifyInstance> {
     }
   });
 
+  app.post("/api/agents/:agentId/vscode-command", async (request, reply) => {
+    const auth = requireAuth(db, request, reply);
+    if (!auth || !requireCsrf(db, request, reply)) return;
+    const { agentId } = request.params as { agentId: string };
+    if (!canAccessAgent(auth.user, agentId)) return reply.code(404).send({ error: "agent_not_found" });
+    const parsed = VscodeCommandRequestSchema.safeParse(request.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_vscode_command", details: parsed.error.flatten() });
+    try {
+      const result = await requestAgentVscode(agentId, {
+        type: "vscode.command",
+        requestId: id("req"),
+        command: parsed.data.command,
+        text: parsed.data.text?.trim() || undefined,
+        filePath: parsed.data.filePath?.trim() || undefined
+      });
+      if (!result.ok) return reply.code(400).send({ error: result.error ?? "vscode_command_failed", output: result.output });
+      return { ok: true, output: result.output };
+    } catch (error) {
+      return reply.code(503).send({ error: error instanceof Error ? error.message : "agent_error" });
+    }
+  });
+
   app.get("/api/chats", async (request, reply) => {
     const auth = requireAuth(db, request, reply);
     if (!auth) return;
@@ -2017,6 +2061,14 @@ async function createApp(): Promise<FastifyInstance> {
         if (pending) {
           clearTimeout(pending.timer);
           sslRequests.delete(parsed.requestId);
+          pending.resolve(parsed);
+        }
+      }
+      if (parsed.type === "vscode.result") {
+        const pending = vscodeRequests.get(parsed.requestId);
+        if (pending) {
+          clearTimeout(pending.timer);
+          vscodeRequests.delete(parsed.requestId);
           pending.resolve(parsed);
         }
       }

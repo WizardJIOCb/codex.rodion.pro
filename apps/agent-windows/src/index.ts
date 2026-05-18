@@ -9,6 +9,7 @@ import { syncLocalChats } from "./local-chat-sync.js";
 import { runCapture } from "./process-utils.js";
 import { makeRedactor } from "./redact.js";
 import { scanRepos } from "./repo-scanner.js";
+import { sendVscodeBridgeCommand } from "./vscode-bridge.js";
 
 const LOCAL_CHAT_SYNC_INTERVAL_MS = 15000;
 const LOCAL_ACTIVITY_INTERVAL_MS = 3000;
@@ -544,6 +545,18 @@ function connect() {
       } catch (error) {
         await sendSslResult(send, message.requestId, false, "", error instanceof Error ? error.message : String(error));
       }
+      return;
+    }
+
+    if (message.type === "vscode.command") {
+      const result = await sendVscodeBridgeCommand(message);
+      send({
+        type: "vscode.result",
+        requestId: message.requestId,
+        ok: result.ok,
+        output: result.output,
+        error: result.error
+      });
       return;
     }
 

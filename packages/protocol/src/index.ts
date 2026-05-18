@@ -183,6 +183,24 @@ export const AgentSslResultSchema = z.object({
   repos: z.array(RepoInfoSchema).optional()
 });
 
+export const VscodeBridgeCommandSchema = z.enum([
+  "ping",
+  "openSidebar",
+  "newChat",
+  "newCodexPanel",
+  "addToThread",
+  "addFileToThread"
+]);
+export type VscodeBridgeCommand = z.infer<typeof VscodeBridgeCommandSchema>;
+
+export const AgentVscodeResultSchema = z.object({
+  type: z.literal("vscode.result"),
+  requestId: z.string().min(1),
+  ok: z.boolean(),
+  error: z.string().optional(),
+  output: z.string().optional()
+});
+
 export const ChatMessageSchema = z.object({
   id: z.string().optional(),
   role: z.enum(["user", "assistant", "system", "tool"]),
@@ -217,6 +235,7 @@ export const AgentToServerSchema = z.discriminatedUnion("type", [
   AgentDeployResultSchema,
   AgentNginxResultSchema,
   AgentSslResultSchema,
+  AgentVscodeResultSchema,
   AgentChatSyncSchema
 ]);
 export type AgentToServer = z.infer<typeof AgentToServerSchema>;
@@ -313,6 +332,14 @@ export const ServerSslSchema = z.object({
   repoId: z.string().min(1)
 });
 
+export const ServerVscodeCommandSchema = z.object({
+  type: z.literal("vscode.command"),
+  requestId: z.string().min(1),
+  command: VscodeBridgeCommandSchema,
+  text: z.string().max(16000).optional(),
+  filePath: z.string().max(500).optional()
+});
+
 export const ServerToAgentSchema = z.discriminatedUnion("type", [
   ServerJobRunSchema,
   ServerJobCancelSchema,
@@ -323,6 +350,7 @@ export const ServerToAgentSchema = z.discriminatedUnion("type", [
   ServerDeploySchema,
   ServerNginxSchema,
   ServerSslSchema,
+  ServerVscodeCommandSchema,
   z.object({ type: z.literal("repo.scan") })
 ]);
 export type ServerToAgent = z.infer<typeof ServerToAgentSchema>;
@@ -386,6 +414,13 @@ export type Nginx = z.infer<typeof NginxSchema>;
 
 export const SslSchema = z.object({});
 export type Ssl = z.infer<typeof SslSchema>;
+
+export const VscodeCommandRequestSchema = z.object({
+  command: VscodeBridgeCommandSchema,
+  text: z.string().max(16000).optional(),
+  filePath: z.string().max(500).optional()
+});
+export type VscodeCommandRequest = z.infer<typeof VscodeCommandRequestSchema>;
 
 export const CreateUserSchema = z.object({
   email: z.string().email().max(200),
