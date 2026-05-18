@@ -1091,10 +1091,12 @@ function App() {
   );
   const localActivityUpdatedAt = Date.parse(localActivity?.updatedAt || "");
   const localActivityUpdatedFresh = Number.isFinite(localActivityUpdatedAt) && nowTick - localActivityUpdatedAt <= 15000;
+  const localActivityDetectedAt = Date.parse(localActivity?.detectedAt || "");
+  const localActivityHeartbeatFresh = Number.isFinite(localActivityDetectedAt) && nowTick - localActivityDetectedAt <= 30000;
   const externalLocalActivityBusy = Boolean(
     localActivity?.source !== "codex.rodion.pro"
     && localActivity?.status === "busy"
-    && localActivityUpdatedFresh
+    && (localActivityUpdatedFresh || localActivityHeartbeatFresh)
   );
   const staleCurrentWebJob = Boolean(selectedAgent?.current_job_id && selectedAgent.current_job_id === activeJob?.id && !activeRunBusy);
   const staleLocalWebBusy = Boolean(localActivity?.source === "codex.rodion.pro" && !activeRunBusy && activeJob?.finishedAt);
