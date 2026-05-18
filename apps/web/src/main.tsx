@@ -197,6 +197,12 @@ type MessageAttachment = {
   dataBase64?: string;
 };
 
+type ChatPayload = {
+  chat: Chat;
+  jobs: Job[];
+  messages: ChatMessage[];
+};
+
 type ImagePreview = {
   src: string;
   name: string;
@@ -237,6 +243,7 @@ type Job = {
   gitStatus: string | null;
   gitDiffStat: string | null;
   gitDiff: string | null;
+  gitDiffOmitted?: boolean;
   createdAt: string;
   startedAt?: string | null;
   finishedAt?: string | null;
@@ -1171,6 +1178,7 @@ function App() {
   const firstMessageRef = useRef<HTMLElement | null>(null);
   const lastMessageRef = useRef<HTMLElement | null>(null);
   const currentScrollChatRef = useRef("");
+  const chatCacheRef = useRef<Map<string, { etag: string; data: ChatPayload }>>(new Map());
   const previousMessageIdsRef = useRef<Set<string>>(new Set());
   const previousMessageSignaturesRef = useRef<Map<string, string>>(new Map());
   const chatAtBottomRef = useRef(true);
@@ -1333,8 +1341,19 @@ function App() {
       setChatNotice("");
     }
     try {
-      const response = await fetch(`/api/chats/${chatId}`, { signal: controller.signal });
+      const cached = chatCacheRef.current.get(chatId);
+      const response = await fetch(`/api/chats/${chatId}`, {
+        signal: controller.signal,
+        headers: cached?.etag ? { "If-None-Match": cached.etag } : undefined
+      });
       if (loadChatAbortRef.current !== controller) return;
+      let data: ChatPayload;
+      let loadedBytes = 0;
+      let totalBytes: number | undefined;
+      if (response.status === 304 && cached) {
+        data = cached.data;
+        if (showLoader) setChatLoadingProgress({ phase: "parse", loadedBytes: 0, percent: 92, startedAt: loadingStartedAt });
+      } else {
       if (!response.ok) {
         loadChatAbortRef.current = null;
         setChatLoadingId((current) => current === chatId ? "" : current);
@@ -1342,8 +1361,7 @@ function App() {
         return;
       }
       const totalHeader = Number(response.headers.get("content-length") ?? 0);
-      const totalBytes = Number.isFinite(totalHeader) && totalHeader > 0 ? totalHeader : undefined;
-      let loadedBytes = 0;
+      totalBytes = Number.isFinite(totalHeader) && totalHeader > 0 ? totalHeader : undefined;
       let responseText = "";
       if (response.body) {
         const reader = response.body.getReader();
@@ -1375,7 +1393,10 @@ function App() {
       }
       if (loadChatAbortRef.current !== controller) return;
       if (showLoader) setChatLoadingProgress({ phase: "parse", loadedBytes, totalBytes, percent: 92, startedAt: loadingStartedAt });
-      const data = JSON.parse(responseText);
+      data = JSON.parse(responseText) as ChatPayload;
+      const etag = response.headers.get("etag");
+      if (etag) chatCacheRef.current.set(chatId, { etag, data });
+      }
       if (loadChatAbortRef.current !== controller) return;
       loadChatAbortRef.current = null;
       setChats((current) => {
@@ -1414,6 +1435,22 @@ function App() {
     setActiveJob(data.job);
     setAllJobs((current) => mergeJobs(current, [data.job]));
     setLogs(data.logs);
+  }
+
+  async function loadJobDetails(jobId: string) {
+    const response = await api(`/api/jobs/${jobId}`);
+    if (!response.ok) return;
+    const data = await response.json();
+    setAllJobs((current) => mergeJobs(current, [data.job]));
+    setJobs((current) => mergeJobs(current, [data.job]));
+    setActiveJob((current) => current?.id === jobId ? data.job : current);
+  }
+
+  async function loadMessageDetails(messageId: string) {
+    const response = await api(`/api/chat-messages/${messageId}/details`);
+    if (!response.ok) return;
+    const data = await response.json();
+    setMessages((current) => current.map((message) => message.id === messageId ? data.message : message));
   }
 
   function scheduleLoadChats(repo: Repo) {
@@ -2493,6 +2530,26 @@ function App() {
     setCurrentUser(null);
   }
 
+  function expandChangeCard(actionKey: string, message: ChatMessage, job?: Job) {
+    const willExpand = !expandedActions[actionKey];
+    setExpandedActions((current) => ({ ...current, [actionKey]: !current[actionKey] }));
+    if (!willExpand) return;
+    if (job?.id && (job.gitDiffOmitted || (job.gitDiffStat && !job.gitDiff))) {
+      loadJobDetails(job.id).catch(() => undefined);
+    }
+    if (message.metadata?.metadataOmitted || message.metadata?.gitDiffOmitted) {
+      loadMessageDetails(message.id).catch(() => undefined);
+    }
+  }
+
+  function expandCodexActions(actionKey: string, message: ChatMessage) {
+    const willExpand = !expandedActions[actionKey];
+    setExpandedActions((current) => ({ ...current, [actionKey]: !current[actionKey] }));
+    if (willExpand && message.metadata?.metadataOmitted) {
+      loadMessageDetails(message.id).catch(() => undefined);
+    }
+  }
+
   function renderCodexChangeCard(message: ChatMessage, job?: Job, progress?: JobProgress | null) {
     const stat = job?.gitDiffStat || (typeof message.metadata?.gitDiffStat === "string" ? message.metadata.gitDiffStat : "");
     const diff = job?.gitDiff || (typeof message.metadata?.gitDiff === "string" ? message.metadata.gitDiff : "");
@@ -2518,7 +2575,7 @@ function App() {
               </small>
             </div>
           </div>
-          <button type="button" onClick={() => setExpandedActions((current) => ({ ...current, [actionKey]: !current[actionKey] }))}>
+          <button type="button" onClick={() => expandChangeCard(actionKey, message, job)}>
             {expanded ? "Hide" : "Details"}
           </button>
         </div>
@@ -2577,7 +2634,7 @@ function App() {
     const expanded = Boolean(expandedActions[actionKey]);
     return (
       <div className="message-actions run-actions">
-        <button type="button" onClick={() => setExpandedActions((current) => ({ ...current, [actionKey]: !current[actionKey] }))}>
+        <button type="button" onClick={() => expandCodexActions(actionKey, message)}>
           <Terminal size={15} />
           <span>Ran {actions.length} commands</span>
           <ChevronDown className={expanded ? "open" : ""} size={15} />

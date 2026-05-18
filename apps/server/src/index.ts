@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import fastifyCookie from "@fastify/cookie";
 import fastifyStatic from "@fastify/static";
@@ -506,7 +507,34 @@ function chatRepoId(chatId: string): string {
 
 type SerializeAttachmentOptions = {
   includeData?: boolean;
+  lightMetadata?: boolean;
 };
+
+function serializeMessageMetadata(metadataJson: string | null, options: SerializeAttachmentOptions = {}) {
+  if (!metadataJson) return undefined;
+  const metadata = JSON.parse(metadataJson) as Record<string, unknown>;
+  if (!options.lightMetadata) return metadata;
+  let omitted = false;
+  const light = { ...metadata };
+  if (typeof light.gitDiff === "string") {
+    delete light.gitDiff;
+    light.gitDiffOmitted = true;
+    omitted = true;
+  }
+  if (Array.isArray(light.codexActions)) {
+    light.codexActions = light.codexActions.map((item) => {
+      if (!item || typeof item !== "object") return item;
+      const value = item as Record<string, unknown>;
+      if (typeof value.output !== "string") return value;
+      omitted = true;
+      const rest = { ...value };
+      delete rest.output;
+      return { ...rest, outputOmitted: true };
+    });
+  }
+  if (omitted) light.metadataOmitted = true;
+  return light;
+}
 
 function serializeMessage(message: ChatMessageRow, options: SerializeAttachmentOptions = {}) {
   const jobAttachments = db.prepare("SELECT * FROM job_attachments WHERE chat_message_id = ? ORDER BY created_at ASC")
@@ -520,7 +548,7 @@ function serializeMessage(message: ChatMessageRow, options: SerializeAttachmentO
     content: message.content,
     source: message.source,
     externalId: message.external_id,
-    metadata: message.metadata_json ? JSON.parse(message.metadata_json) : undefined,
+    metadata: serializeMessageMetadata(message.metadata_json, options),
     createdAt: message.created_at,
     attachments: [
       ...jobAttachments.map((attachment) => serializeAttachment(attachment, options)),
@@ -564,7 +592,7 @@ function serializeMessagesForChat(chatId: string, messages: ChatMessageRow[], op
     content: message.content,
     source: message.source,
     externalId: message.external_id,
-    metadata: message.metadata_json ? JSON.parse(message.metadata_json) : undefined,
+    metadata: serializeMessageMetadata(message.metadata_json, options),
     createdAt: message.created_at,
     attachments: [
       ...(jobAttachmentsByMessage.get(message.id) ?? []).map((attachment) => serializeAttachment(attachment, options)),
@@ -795,7 +823,8 @@ async function authenticateAgent(token: string | undefined): Promise<AgentRow | 
   return null;
 }
 
-function serializeJob(job: JobRow) {
+function serializeJob(job: JobRow, options: { includeDiff?: boolean } = {}) {
+  const includeDiff = options.includeDiff ?? true;
   return {
     id: job.id,
     chatId: job.chat_id,
@@ -814,7 +843,8 @@ function serializeJob(job: JobRow) {
     finalMessage: job.final_message,
     gitStatus: job.git_status,
     gitDiffStat: job.git_diff_stat,
-    gitDiff: job.git_diff,
+    gitDiff: includeDiff ? job.git_diff : null,
+    gitDiffOmitted: !includeDiff && Boolean(job.git_diff),
     branchName: job.branch_name,
     codexThreadId: job.codex_thread_id,
     createdAt: job.created_at,
@@ -836,6 +866,18 @@ function serializeChat(chat: ChatRow) {
     createdAt: chat.created_at,
     updatedAt: chat.updated_at
   };
+}
+
+function chatEtag(chat: ChatRow, messages: ChatMessageRow[], jobs: JobRow[]) {
+  const value = JSON.stringify({
+    id: chat.id,
+    updatedAt: chat.updated_at,
+    messageCount: messages.length,
+    lastMessageAt: messages.at(-1)?.created_at ?? "",
+    jobCount: jobs.length,
+    jobs: jobs.map((job) => [job.id, job.status, job.started_at, job.finished_at, job.git_diff_stat?.length ?? 0, job.git_diff?.length ?? 0])
+  });
+  return `W/"${createHash("sha256").update(value).digest("base64url")}"`;
 }
 
 function projectIdFromName(name: string): string {
@@ -1516,7 +1558,24 @@ async function createApp(): Promise<FastifyInstance> {
     if (!chat) return reply.code(404).send({ error: "not_found" });
     const rows = db.prepare("SELECT * FROM jobs WHERE chat_id = ? ORDER BY created_at DESC").all(chatId) as JobRow[];
     const messages = db.prepare("SELECT * FROM chat_messages WHERE chat_id = ? ORDER BY created_at ASC").all(chatId) as ChatMessageRow[];
-    return { chat: serializeChat(chat), jobs: rows.map(serializeJob), messages: serializeMessagesForChat(chatId, messages, { includeData: true }) };
+    const etag = chatEtag(chat, messages, rows);
+    reply.header("ETag", etag);
+    reply.header("Cache-Control", "private, max-age=0, must-revalidate");
+    if (request.headers["if-none-match"] === etag) return reply.code(304).send();
+    return {
+      chat: serializeChat(chat),
+      jobs: rows.map((row) => serializeJob(row, { includeDiff: false })),
+      messages: serializeMessagesForChat(chatId, messages, { includeData: true, lightMetadata: true })
+    };
+  });
+
+  app.get("/api/chat-messages/:id/details", async (request, reply) => {
+    const auth = requireAuth(db, request, reply);
+    if (!auth) return;
+    const messageId = (request.params as { id: string }).id;
+    const message = db.prepare("SELECT * FROM chat_messages WHERE id = ?").get(messageId) as ChatMessageRow | undefined;
+    if (!message || !canAccessChat(auth.user, message.chat_id)) return reply.code(404).send({ error: "not_found" });
+    return { message: serializeMessage(message, { includeData: true }) };
   });
 
   app.get("/api/job-attachments/:id", async (request, reply) => {
@@ -1643,7 +1702,7 @@ async function createApp(): Promise<FastifyInstance> {
           ${isAdmin(auth.user) ? "" : "WHERE a.user_id = ?"}
           ORDER BY j.created_at DESC LIMIT 50
         `).all(...(isAdmin(auth.user) ? [] : [auth.user.id])) as JobRow[];
-    return { jobs: rows.map(serializeJob) };
+    return { jobs: rows.map((row) => serializeJob(row)) };
   });
 
   app.get("/api/jobs/:id", async (request, reply) => {
