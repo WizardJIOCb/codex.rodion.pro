@@ -2550,6 +2550,19 @@ function App() {
     }
   }
 
+  function toggleFileDiff(diffKey: string, message: ChatMessage, job?: Job, fileDiff?: FileDiff) {
+    if (fileDiff) {
+      setExpandedActions((current) => ({ ...current, [diffKey]: !current[diffKey] }));
+      return;
+    }
+    if (job?.id && (job.gitDiffOmitted || (job.gitDiffStat && !job.gitDiff))) {
+      loadJobDetails(job.id).catch(() => undefined);
+    }
+    if (message.metadata?.metadataOmitted || message.metadata?.gitDiffOmitted) {
+      loadMessageDetails(message.id).catch(() => undefined);
+    }
+  }
+
   function renderCodexChangeCard(message: ChatMessage, job?: Job, progress?: JobProgress | null) {
     const stat = job?.gitDiffStat || (typeof message.metadata?.gitDiffStat === "string" ? message.metadata.gitDiffStat : "");
     const diff = job?.gitDiff || (typeof message.metadata?.gitDiff === "string" ? message.metadata.gitDiff : "");
@@ -2589,14 +2602,13 @@ function App() {
                 <div className="codex-change-file" key={row.file}>
                   <button
                     className="codex-change-file-row"
-                    disabled={!fileDiff}
                     type="button"
-                    onClick={() => fileDiff && setExpandedActions((current) => ({ ...current, [diffKey]: !current[diffKey] }))}
+                    onClick={() => toggleFileDiff(diffKey, message, job, fileDiff)}
                   >
                     <span>{row.file}</span>
                     <small className="diff-meta">
                       {renderDiffRowMeta(row)}
-                      {fileDiff && <ChevronDown className={fileExpanded ? "open" : ""} size={15} />}
+                      <ChevronDown className={fileExpanded ? "open" : ""} size={15} />
                     </small>
                   </button>
                   {fileExpanded && fileDiff && renderFileDiff(fileDiff)}
