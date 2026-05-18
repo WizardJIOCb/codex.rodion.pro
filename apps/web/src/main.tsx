@@ -2943,7 +2943,6 @@ function App() {
               </div>
             ))}
           </div>
-          <p>Для реального OAuth нужно добавить client id/secret и callback URL на сервере; интерфейс уже показывает провайдеры и состояние подключения.</p>
         </section>
 
         {profileNotice && <div className="notice">{profileNotice}</div>}
