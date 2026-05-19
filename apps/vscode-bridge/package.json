@@ -13,7 +13,8 @@
     "Other"
   ],
   "activationEvents": [
-    "onStartupFinished"
+    "onStartupFinished",
+    "onView:codexRodionChats"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -21,8 +22,30 @@
       {
         "command": "codexRodionBridge.restart",
         "title": "codex.rodion.pro: Restart VS Code Bridge"
+      },
+      {
+        "command": "codexRodionBridge.refreshChats",
+        "title": "codex.rodion.pro: Refresh Chats"
       }
-    ]
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "codexRodion",
+          "title": "codex.rodion.pro",
+          "icon": "resources/codex-rodion.svg"
+        }
+      ]
+    },
+    "views": {
+      "codexRodion": [
+        {
+          "id": "codexRodionChats",
+          "type": "webview",
+          "name": "Chats"
+        }
+      ]
+    }
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

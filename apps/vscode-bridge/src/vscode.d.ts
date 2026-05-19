@@ -12,6 +12,21 @@ declare module "vscode" {
     input: unknown;
   };
 
+  export type Webview = {
+    html: string;
+    options: { enableScripts?: boolean };
+    onDidReceiveMessage(listener: (message: unknown) => unknown): Disposable;
+    postMessage(message: unknown): PromiseLike<boolean>;
+  };
+
+  export type WebviewView = {
+    webview: Webview;
+  };
+
+  export type WebviewViewProvider = {
+    resolveWebviewView(view: WebviewView): void | PromiseLike<void>;
+  };
+
   export class TabInputCustom {
     constructor(uri: Uri, viewType: string);
     uri: Uri;
@@ -30,6 +45,7 @@ declare module "vscode" {
   export const window: {
     showInformationMessage(message: string): PromiseLike<string | undefined>;
     showWarningMessage(message: string): PromiseLike<string | undefined>;
+    registerWebviewViewProvider(viewId: string, provider: WebviewViewProvider): Disposable;
     tabGroups: {
       all: Array<{ tabs: Tab[] }>;
       close(tabs: Tab | Tab[], preserveFocus?: boolean): PromiseLike<boolean>;

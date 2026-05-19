@@ -90,6 +90,10 @@ if (Test-Path $ExtensionTarget) {
 New-Item -ItemType Directory -Path $ExtensionTarget | Out-Null
 Copy-Item -LiteralPath (Join-Path $ExtensionSource "package.json") -Destination $ExtensionTarget
 Copy-Item -LiteralPath $ExtensionDist -Destination $ExtensionTarget -Recurse
+$ExtensionResources = Join-Path $ExtensionSource "resources"
+if (Test-Path $ExtensionResources) {
+  Copy-Item -LiteralPath $ExtensionResources -Destination $ExtensionTarget -Recurse
+}
 
 if (Test-VscodeBridge) {
   Write-Step "VS Code bridge is already responding."

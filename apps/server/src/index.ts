@@ -1144,6 +1144,7 @@ function agentPackageZip(): Buffer {
   addDir(entries, join(root, "apps", "agent-windows", "dist"), "apps/agent-windows/dist");
   addFile(entries, join(root, "apps", "vscode-bridge", "package.json"), "apps/vscode-bridge/package.json");
   addDir(entries, join(root, "apps", "vscode-bridge", "dist"), "apps/vscode-bridge/dist");
+  addDir(entries, join(root, "apps", "vscode-bridge", "resources"), "apps/vscode-bridge/resources");
   addFile(entries, join(root, "packages", "protocol", "package.json"), "packages/protocol/package.json");
   addDir(entries, join(root, "packages", "protocol", "dist"), "packages/protocol/dist");
   return createStoredZip(entries.sort((a, b) => a.path.localeCompare(b.path)));
