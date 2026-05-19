@@ -1634,9 +1634,12 @@ h2 {
 }
 
 .message.system {
-  gap: 5px;
+  grid-template-columns: minmax(74px, auto) minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
   width: min(720px, 100%);
-  padding: 8px 10px;
+  min-height: 34px;
+  padding: 6px 9px;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -1644,20 +1647,17 @@ h2 {
 }
 
 .message.system .message-meta {
+  display: contents;
   font-size: 11px;
   text-transform: uppercase;
 }
 
-.message.system .message-body {
-  max-height: 22px;
+.system-message-body {
+  min-width: 0;
   overflow: hidden;
   color: #374151;
   font-size: 12px;
   line-height: 1.35;
-}
-
-.message.system .message-body p {
-  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

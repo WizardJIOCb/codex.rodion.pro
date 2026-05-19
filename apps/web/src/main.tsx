@@ -4128,7 +4128,11 @@ function App() {
                                   )}
                                 </div>
                                 {collapsedRun && renderCollapsedRunTrace(message, collapsedRun)}
-                                {renderRichText(message.content, "rich-text message-body")}
+                                {message.role === "system" ? (
+                                  <div className="system-message-body" title={normalizeDisplayText(message.content).trim()}>
+                                    {normalizeDisplayText(message.content).trim()}
+                                  </div>
+                                ) : renderRichText(message.content, "rich-text message-body")}
                                 {renderMessageAttachments(message.attachments, setImagePreview)}
                                 {renderCodexActions(message, messageJob)}
                                 {renderCodexChangeCard(message, messageJob, messageProgress)}
