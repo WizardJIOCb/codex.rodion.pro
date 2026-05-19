@@ -582,6 +582,11 @@ function freshLocalActivity(activity: LocalCodexActivity | undefined, agentId?: 
   return activity;
 }
 
+function broadcastAgentActivity(agentId: string, activity: LocalCodexActivity): void {
+  const localActivity = freshLocalActivity(activity, agentId) ?? idleLocalActivity();
+  broadcast({ type: "agent.activity", agentId, localActivity });
+}
+
 function isAgentLocallyBusy(agentId: string): boolean {
   const row = db.prepare("SELECT local_activity_json FROM agents WHERE id = ?").get(agentId) as Pick<AgentRow, "local_activity_json"> | undefined;
   return freshLocalActivity(parseLocalActivity(row?.local_activity_json ?? null), agentId)?.status === "busy";
@@ -2278,7 +2283,7 @@ async function createApp(): Promise<FastifyInstance> {
           nowIso(),
           agent.id
         );
-        if (parsed.localActivity) broadcast({ type: "agent.activity", agentId: agent.id, localActivity: parsed.localActivity });
+        if (parsed.localActivity) broadcastAgentActivity(agent.id, parsed.localActivity);
         upsertRepos(agent.id, parsed.repos);
         dispatchQueue(agent.id);
       }
@@ -2290,7 +2295,7 @@ async function createApp(): Promise<FastifyInstance> {
         } else {
           db.prepare("UPDATE agents SET last_seen_at=?, current_job_id=?, local_activity_json=COALESCE(?, local_activity_json) WHERE id=?").run(nowIso(), parsed.currentJobId ?? null, localActivityJson, agent.id);
         }
-        if (parsed.localActivity) broadcast({ type: "agent.activity", agentId: agent.id, localActivity: parsed.localActivity });
+        if (parsed.localActivity) broadcastAgentActivity(agent.id, parsed.localActivity);
         if (parsed.repos) upsertRepos(agent.id, parsed.repos);
         clearOrphanedAgentJobs(agent.id, parsed.currentJobId);
         dispatchQueue(agent.id);
@@ -2324,6 +2329,10 @@ async function createApp(): Promise<FastifyInstance> {
           parsed.jobId
         );
         const job = db.prepare("SELECT * FROM jobs WHERE id = ?").get(parsed.jobId) as JobRow | undefined;
+        if (job?.chat_id && parsed.codexThreadId) {
+          db.prepare("UPDATE chats SET external_id = COALESCE(external_id, ?), updated_at = ? WHERE id = ?")
+            .run(parsed.codexThreadId, finishedAt, job.chat_id);
+        }
         if (job?.chat_id && parsed.finalMessage) {
           const startedAt = job.started_at ?? job.created_at;
           const startedAtMs = Date.parse(startedAt);
