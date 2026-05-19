@@ -982,6 +982,8 @@ function shouldCollapseCompletedTurnMessage(message: ChatMessage) {
 
 const CHAT_TOP_THRESHOLD_PX = 120;
 const CHAT_BOTTOM_THRESHOLD_PX = 16;
+const CHAT_SYNC_REFRESH_MIN_MS = 3500;
+const CHAT_LIST_REFRESH_MIN_MS = 2500;
 
 function displayLogMessage(log: Log) {
   const rawText = log.message.trim();
@@ -1437,6 +1439,7 @@ function App() {
   }, [localActivity?.chatExternalId, localActivity?.chatSource, localBusyChatTitle, localBusyRepoKey, runningJobs]);
   const activeChatIdRef = useRef(activeChatId);
   const activeJobIdRef = useRef(activeJob?.id ?? "");
+  const activeRunBusyRef = useRef(activeRunBusy);
   const selectedRepoRef = useRef<Repo | undefined>(selectedRepo);
   const loadChatsTimerRef = useRef<number | undefined>(undefined);
   const loadChatTimerRef = useRef<number | undefined>(undefined);
@@ -1461,9 +1464,13 @@ function App() {
   const chatAtBottomRef = useRef(true);
   const chatStickToBottomRef = useRef(true);
   const autoScrollingUntilRef = useRef(0);
+  const lastChatListLoadAtRef = useRef<Record<string, number>>({});
+  const lastChatLoadAtRef = useRef<Record<string, number>>({});
+  const scheduledChatLoadRef = useRef<{ chatId: string; dueAt: number } | null>(null);
   const pendingVscodeThreadRefreshRef = useRef<{ agentId: string; chatId: string; jobId: string } | null>(null);
   activeChatIdRef.current = activeChatId;
   activeJobIdRef.current = activeJob?.id ?? "";
+  activeRunBusyRef.current = activeRunBusy;
   selectedRepoRef.current = selectedRepo;
   const activeProgress = activeJob ? progressByJob[activeJob.id] ?? activeJob.progress ?? {
     jobId: activeJob.id,
@@ -1825,19 +1832,33 @@ function App() {
   }
 
   function scheduleLoadChats(repo: Repo) {
+    const key = `${repo.agentId}:${repo.id}`;
+    const now = Date.now();
+    const last = lastChatListLoadAtRef.current[key] ?? 0;
+    const delay = Math.max(180, CHAT_LIST_REFRESH_MIN_MS - (now - last));
     if (loadChatsTimerRef.current) window.clearTimeout(loadChatsTimerRef.current);
     loadChatsTimerRef.current = window.setTimeout(() => {
+      lastChatListLoadAtRef.current[key] = Date.now();
       loadChats(repo).catch(() => undefined);
-    }, 180);
+    }, delay);
   }
 
-  function scheduleLoadChat(chatId: string) {
+  function scheduleLoadChat(chatId: string, reason: "direct" | "sync" = "direct") {
     const currentLoad = loadChatInFlightRef.current;
     if (currentLoad?.chatId === chatId && currentLoad.foreground) return;
+    const now = Date.now();
+    const last = lastChatLoadAtRef.current[chatId] ?? 0;
+    const minInterval = reason === "sync" ? CHAT_SYNC_REFRESH_MIN_MS : 0;
+    const delay = reason === "sync" ? Math.max(400, minInterval - (now - last)) : 80;
+    const dueAt = now + delay;
+    if (scheduledChatLoadRef.current?.chatId === chatId && scheduledChatLoadRef.current.dueAt <= dueAt) return;
     if (loadChatTimerRef.current) window.clearTimeout(loadChatTimerRef.current);
+    scheduledChatLoadRef.current = { chatId, dueAt };
     loadChatTimerRef.current = window.setTimeout(() => {
+      if (scheduledChatLoadRef.current?.chatId === chatId) scheduledChatLoadRef.current = null;
+      lastChatLoadAtRef.current[chatId] = Date.now();
       loadChat(chatId).catch(() => undefined);
-    }, 80);
+    }, delay);
   }
 
   function scheduleLoadJob(jobId: string) {
@@ -2101,7 +2122,7 @@ function App() {
             && activeChatIdRef.current
             && (!message.chatId || message.chatId === activeChatIdRef.current)
           ) {
-            scheduleLoadChat(activeChatIdRef.current);
+            scheduleLoadChat(activeChatIdRef.current, activeRunBusyRef.current ? "direct" : "sync");
           }
           return;
         }

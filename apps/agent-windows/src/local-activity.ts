@@ -5,7 +5,7 @@ import type { LocalCodexActivity } from "@cmc/protocol";
 import type { AgentConfig, RepoConfig } from "./config.js";
 
 const BUSY_WINDOW_MS = 8000;
-const BUSY_IDLE_GRACE_MS = 3 * 60 * 1000;
+const BUSY_IDLE_GRACE_MS = 15 * 60 * 1000;
 const BUSY_USER_TURN_WINDOW_MS = 30 * 60 * 1000;
 
 let busyKey = "";
