@@ -1417,6 +1417,7 @@ function App() {
   const chatAtBottomRef = useRef(true);
   const chatStickToBottomRef = useRef(true);
   const autoScrollingUntilRef = useRef(0);
+  const pendingVscodeThreadRefreshRef = useRef<{ agentId: string; chatId: string; jobId: string } | null>(null);
   activeChatIdRef.current = activeChatId;
   activeJobIdRef.current = activeJob?.id ?? "";
   selectedRepoRef.current = selectedRepo;
@@ -1989,6 +1990,16 @@ function App() {
   }, [codexModel, reasoningEffort, codexSpeed]);
 
   useEffect(() => {
+    const pending = pendingVscodeThreadRefreshRef.current;
+    if (!pending || !csrf || !activeCodexThreadId || pending.chatId !== activeChatId || pending.agentId !== selectedRepo?.agentId) return;
+    pendingVscodeThreadRefreshRef.current = null;
+    const timer = window.setTimeout(() => {
+      void runVscodeCommand("reopenThread", pending.agentId, { threadId: activeCodexThreadId }, { auto: true });
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [activeChatId, activeCodexThreadId, csrf, selectedRepo?.agentId]);
+
+  useEffect(() => {
     if (!csrf) return;
     const protocol = location.protocol === "https:" ? "wss" : "ws";
     let ws: WebSocket | undefined;
@@ -2410,6 +2421,8 @@ function App() {
       return;
     }
     let targetChatId = activeChatId;
+    const targetAgentId = selectedRepo.agentId;
+    const threadIdBeforeSend = activeCodexThreadId;
     const promptText = prompt.trim() || "Посмотри вложенные файлы.";
     setBusy(true);
     if (!targetChatId) {
@@ -2453,10 +2466,17 @@ function App() {
     setBusy(false);
     if (!response.ok) return;
     const { jobId } = await response.json();
+    pendingVscodeThreadRefreshRef.current = { agentId: targetAgentId, chatId: targetChatId, jobId };
     setPrompt("");
     setAttachments([]);
     setAttachmentNotice("");
     await loadChat(targetChatId, jobId);
+    if (threadIdBeforeSend) {
+      pendingVscodeThreadRefreshRef.current = null;
+      window.setTimeout(() => {
+        void runVscodeCommand("reopenThread", targetAgentId, { threadId: threadIdBeforeSend }, { auto: true });
+      }, 300);
+    }
   }
 
   async function hideChat(chat: Chat) {
@@ -2608,12 +2628,13 @@ function App() {
   async function runVscodeCommand(
     command: VscodeCommand,
     agentId = selectedRepo?.agentId ?? selectedAgent?.id,
-    payload: { text?: string; filePath?: string; threadId?: string } = {}
+    payload: { text?: string; filePath?: string; threadId?: string } = {},
+    options: { auto?: boolean } = {}
   ) {
     if (!agentId || !csrf) return;
     setVscodeBusy(true);
     setActionMenuOpen(false);
-    setVscodeNotice("VS Code bridge command sent...");
+    setVscodeNotice(options.auto ? "Автоматически обновляю VS Code..." : "VS Code bridge command sent...");
     const response = await api(`/api/agents/${agentId}/vscode-command`, {
       method: "POST",
       headers: { "x-csrf-token": csrf },
@@ -2625,7 +2646,7 @@ function App() {
       setVscodeNotice(data.output || data.error || "VS Code bridge command failed.");
       return;
     }
-    setVscodeNotice(data.output || "VS Code bridge command completed.");
+    setVscodeNotice(data.output || (options.auto ? "VS Code chat refreshed." : "VS Code bridge command completed."));
   }
 
   async function refreshCurrentVscodeThread() {

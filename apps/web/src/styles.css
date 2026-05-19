@@ -1633,6 +1633,35 @@ h2 {
   backdrop-filter: none;
 }
 
+.message.system {
+  gap: 5px;
+  width: min(720px, 100%);
+  padding: 8px 10px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.message.system .message-meta {
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.message.system .message-body {
+  max-height: 22px;
+  overflow: hidden;
+  color: #374151;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.message.system .message-body p {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .message-meta {
   display: flex;
   align-items: center;
