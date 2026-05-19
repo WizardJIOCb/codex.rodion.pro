@@ -6,6 +6,7 @@ import type { AgentConfig, RepoConfig } from "./config.js";
 
 const BUSY_WINDOW_MS = 8000;
 const BUSY_IDLE_GRACE_MS = 3 * 60 * 1000;
+const BUSY_USER_TURN_WINDOW_MS = 30 * 60 * 1000;
 
 let busyKey = "";
 let busySinceMs = 0;
@@ -150,6 +151,7 @@ function recentCodexThreads(config: AgentConfig): Candidate[] {
       const repo = matchRepo(config.repos, row.cwd);
       if (!repo) return [];
       const startedAt = latestUserMessageMsFromCodexRollout(row.rollout_path);
+      if (!startedAt || Date.now() - startedAt > BUSY_USER_TURN_WINDOW_MS) return [];
       return [{
         key: `local-codex:${repo.id}:${row.id}:${startedAt || row.updated_at}`,
         repoId: repo.id,
