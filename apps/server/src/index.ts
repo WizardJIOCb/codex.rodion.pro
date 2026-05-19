@@ -547,37 +547,11 @@ function idleLocalActivity(summary = "No recent local Codex activity."): LocalCo
   return { status: "idle", summary, source: "agent heartbeat", detectedAt: nowIso() };
 }
 
-function localActivityHasSyncedFinal(agentId: string | undefined, activity: LocalCodexActivity): boolean {
-  if (!agentId || activity.status !== "busy" || activity.source === "codex.rodion.pro" || !activity.repoId || !activity.updatedAt) return false;
-  const updatedAt = Date.parse(activity.updatedAt);
-  if (!Number.isFinite(updatedAt)) return false;
-  const row = activity.chatSource && activity.chatExternalId
-    ? db.prepare(`
-      SELECT MAX(m.created_at) AS latest_assistant_at
-      FROM chat_messages m
-      JOIN chats c ON c.id = m.chat_id
-      WHERE c.agent_id = ? AND c.repo_id = ? AND c.source = ? AND c.external_id = ? AND m.role = 'assistant' AND m.source IN ('codex','vscode')
-    `).get(agentId, activity.repoId, activity.chatSource, activity.chatExternalId) as { latest_assistant_at: string | null } | undefined
-    : db.prepare(`
-      SELECT MAX(m.created_at) AS latest_assistant_at
-      FROM chat_messages m
-      JOIN chats c ON c.id = m.chat_id
-      WHERE c.agent_id = ? AND c.repo_id = ? AND m.role = 'assistant' AND m.source IN ('codex','vscode')
-    `).get(agentId, activity.repoId) as { latest_assistant_at: string | null } | undefined;
-  const latestAssistantAt = Date.parse(row?.latest_assistant_at ?? "");
-  return Number.isFinite(latestAssistantAt)
-    && latestAssistantAt >= updatedAt - 1000
-    && Date.now() - Math.max(latestAssistantAt, updatedAt) > 12000;
-}
-
-function freshLocalActivity(activity: LocalCodexActivity | undefined, agentId?: string): LocalCodexActivity | undefined {
+function freshLocalActivity(activity: LocalCodexActivity | undefined, _agentId?: string): LocalCodexActivity | undefined {
   if (!activity) return undefined;
   const timestamp = Date.parse(activity.detectedAt);
   if (!Number.isFinite(timestamp) || Date.now() - timestamp > 90000) {
     return idleLocalActivity();
-  }
-  if (localActivityHasSyncedFinal(agentId, activity)) {
-    return idleLocalActivity("Local Codex activity already synced a final reply.");
   }
   return activity;
 }

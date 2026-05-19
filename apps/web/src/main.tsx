@@ -982,8 +982,8 @@ function shouldCollapseCompletedTurnMessage(message: ChatMessage) {
 
 const CHAT_TOP_THRESHOLD_PX = 120;
 const CHAT_BOTTOM_THRESHOLD_PX = 16;
-const CHAT_SYNC_REFRESH_MIN_MS = 3500;
-const CHAT_LIST_REFRESH_MIN_MS = 2500;
+const CHAT_SYNC_REFRESH_MIN_MS = 10000;
+const CHAT_LIST_REFRESH_MIN_MS = 8000;
 
 function displayLogMessage(log: Log) {
   const rawText = log.message.trim();
@@ -1352,32 +1352,10 @@ function App() {
   );
   const staleCurrentWebJob = Boolean(selectedAgent?.current_job_id && selectedAgent.current_job_id === activeJob?.id && !activeRunBusy);
   const staleLocalWebBusy = Boolean(localActivity?.source === "codex.rodion.pro" && !activeRunBusy && activeJob?.finishedAt);
-  const latestLocalAssistantMessageAt = Math.max(0, ...messages
-    .filter((message) => message.role === "assistant")
-    .map((message) => Date.parse(message.createdAt))
-    .filter(Number.isFinite));
-  const activeChatMatchesLocalActivity = Boolean(
-    !localActivity?.chatSource
-    || (
-      activeChat
-      && activeChat.source === localActivity.chatSource
-      && activeChat.externalId === localActivity.chatExternalId
-    )
-  );
-  const localFinalMessageLikelySeen = Boolean(
-    (!localActivity?.repoId || selectedRepo?.id === localActivity.repoId)
-    && activeChatMatchesLocalActivity
-    &&
-    latestLocalAssistantMessageAt
-    && Number.isFinite(localActivityUpdatedAt)
-    && latestLocalAssistantMessageAt >= localActivityUpdatedAt - 1000
-    && nowTick - Math.max(latestLocalAssistantMessageAt, localActivityUpdatedAt) > 12000
-  );
   const rawLocalCodexBusy = Boolean(
     (externalLocalActivityBusy || webActivityRunning)
     && !staleCurrentWebJob
     && !staleLocalWebBusy
-    && !localFinalMessageLikelySeen
   );
   const localCodexBusy = rawLocalCodexBusy || localBusyHold.until > nowTick;
   const localBusySince = rawLocalCodexBusy
@@ -2122,7 +2100,7 @@ function App() {
             && activeChatIdRef.current
             && (!message.chatId || message.chatId === activeChatIdRef.current)
           ) {
-            scheduleLoadChat(activeChatIdRef.current, activeRunBusyRef.current ? "direct" : "sync");
+            if (!activeRunBusyRef.current) scheduleLoadChat(activeChatIdRef.current, "sync");
           }
           return;
         }
@@ -2274,14 +2252,13 @@ function App() {
       }));
       return;
     }
-    if ((localFinalMessageLikelySeen || staleCurrentWebJob || staleLocalWebBusy) && localBusyHold.since) {
+    if ((staleCurrentWebJob || staleLocalWebBusy) && localBusyHold.since) {
       setLocalBusyHold({ until: 0 });
       return;
     }
     if (localBusyHold.until <= now && localBusyHold.since) setLocalBusyHold({ until: 0 });
   }, [
     rawLocalCodexBusy,
-    localFinalMessageLikelySeen,
     staleCurrentWebJob,
     staleLocalWebBusy,
     localActivity?.busySinceAt,
