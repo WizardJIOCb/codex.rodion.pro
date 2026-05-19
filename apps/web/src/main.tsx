@@ -2102,7 +2102,7 @@ function App() {
             && activeChatIdRef.current
             && (!message.chatId || message.chatId === activeChatIdRef.current)
           ) {
-            if (!activeRunBusyRef.current) scheduleLoadChat(activeChatIdRef.current, "sync");
+            scheduleLoadChat(activeChatIdRef.current, "sync");
           }
           return;
         }

@@ -981,11 +981,23 @@ function serializeChat(chat: ChatRow) {
 }
 
 function chatEtag(chat: ChatRow, messages: ChatMessageRow[], jobs: JobRow[]) {
+  const lastMessage = messages.at(-1);
   const value = JSON.stringify({
     id: chat.id,
     updatedAt: chat.updated_at,
     messageCount: messages.length,
-    lastMessageAt: messages.at(-1)?.created_at ?? "",
+    messages: messages.map((message) => [
+      message.id,
+      message.role,
+      message.source,
+      message.external_id,
+      message.created_at,
+      message.content.length,
+      message.metadata_json?.length ?? 0
+    ]),
+    lastMessageHash: lastMessage
+      ? createHash("sha256").update(lastMessage.content).update(lastMessage.metadata_json ?? "").digest("base64url")
+      : "",
     jobCount: jobs.length,
     jobs: jobs.map((job) => [job.id, job.status, job.started_at, job.finished_at, job.git_diff_stat?.length ?? 0, job.git_diff?.length ?? 0, job.progress_json?.length ?? 0])
   });
