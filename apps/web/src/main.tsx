@@ -1443,7 +1443,6 @@ function App() {
   const lastChatListLoadAtRef = useRef<Record<string, number>>({});
   const lastChatLoadAtRef = useRef<Record<string, number>>({});
   const scheduledChatLoadRef = useRef<{ chatId: string; dueAt: number } | null>(null);
-  const pendingVscodeThreadRefreshRef = useRef<{ agentId: string; chatId: string; jobId: string } | null>(null);
   activeChatIdRef.current = activeChatId;
   activeJobIdRef.current = activeJob?.id ?? "";
   activeRunBusyRef.current = activeRunBusy;
@@ -2036,16 +2035,6 @@ function App() {
   }, [codexModel, reasoningEffort, codexSpeed]);
 
   useEffect(() => {
-    const pending = pendingVscodeThreadRefreshRef.current;
-    if (!pending || !csrf || !activeCodexThreadId || pending.chatId !== activeChatId || pending.agentId !== selectedRepo?.agentId) return;
-    pendingVscodeThreadRefreshRef.current = null;
-    const timer = window.setTimeout(() => {
-      void runVscodeCommand("reopenThread", pending.agentId, { threadId: activeCodexThreadId }, { auto: true });
-    }, 300);
-    return () => window.clearTimeout(timer);
-  }, [activeChatId, activeCodexThreadId, csrf, selectedRepo?.agentId]);
-
-  useEffect(() => {
     if (!csrf) return;
     const protocol = location.protocol === "https:" ? "wss" : "ws";
     let ws: WebSocket | undefined;
@@ -2466,8 +2455,6 @@ function App() {
       return;
     }
     let targetChatId = activeChatId;
-    const targetAgentId = selectedRepo.agentId;
-    const threadIdBeforeSend = activeCodexThreadId;
     const promptText = prompt.trim() || "Посмотри вложенные файлы.";
     setBusy(true);
     if (!targetChatId) {
@@ -2511,17 +2498,11 @@ function App() {
     setBusy(false);
     if (!response.ok) return;
     const { jobId } = await response.json();
-    pendingVscodeThreadRefreshRef.current = { agentId: targetAgentId, chatId: targetChatId, jobId };
     setPrompt("");
     setAttachments([]);
     setAttachmentNotice("");
+    setVscodeNotice("Задача запущена в web. VS Code можно обновить вручную после завершения.");
     await loadChat(targetChatId, jobId);
-    if (threadIdBeforeSend) {
-      pendingVscodeThreadRefreshRef.current = null;
-      window.setTimeout(() => {
-        void runVscodeCommand("reopenThread", targetAgentId, { threadId: threadIdBeforeSend }, { auto: true });
-      }, 300);
-    }
   }
 
   async function hideChat(chat: Chat) {
@@ -3519,12 +3500,13 @@ function App() {
         <div className="composer-bridge">
           <button
             className="secondary"
-            disabled={vscodeBusy || !activeCodexThreadId}
+            disabled={vscodeBusy || activeRunBusy || !activeCodexThreadId}
             type="button"
             onClick={refreshCurrentVscodeThread}
+            title={activeRunBusy ? "Дождись завершения web-задачи, потом обнови чат в VS Code." : "Переоткрыть текущий Codex thread в VS Code."}
           >
             <RefreshCw className={vscodeBusy ? "spin" : ""} size={16} />
-            Обновить в VS Code
+            Обновить чат в VS Code
           </button>
           <button
             className="secondary"
