@@ -2628,6 +2628,11 @@ function App() {
     setVscodeNotice(data.output || "VS Code bridge command completed.");
   }
 
+  async function refreshCurrentVscodeThread() {
+    if (!selectedRepo || !activeCodexThreadId) return;
+    await runVscodeCommand("reopenThread", selectedRepo.agentId, { threadId: activeCodexThreadId });
+  }
+
   async function syncGit(event: React.FormEvent) {
     event.preventDefault();
     await runGitSync();
@@ -3445,6 +3450,27 @@ function App() {
     const showCodexBusy = localCodexBusy || activeRunBusy;
     return (
       <form className="composer" ref={composerRef} onSubmit={createJob}>
+        <div className="composer-bridge">
+          <button
+            className="secondary"
+            disabled={vscodeBusy || !activeCodexThreadId}
+            type="button"
+            onClick={refreshCurrentVscodeThread}
+          >
+            <RefreshCw className={vscodeBusy ? "spin" : ""} size={16} />
+            Обновить в VS Code
+          </button>
+          <button
+            className="secondary"
+            disabled={vscodeBusy}
+            type="button"
+            onClick={() => runVscodeCommand("openSidebar", selectedRepo.agentId)}
+          >
+            <PanelLeftOpen size={16} />
+            Codex
+          </button>
+          {vscodeNotice && <span className="composer-bridge-notice">{vscodeNotice}</span>}
+        </div>
         {attachments.length > 0 && (
           <div className="attachment-list">
             {attachments.map((attachment) => (

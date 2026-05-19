@@ -1080,6 +1080,28 @@ textarea:focus {
   font-weight: 800;
 }
 
+.composer-bridge {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.composer-bridge .secondary {
+  min-height: 32px;
+  padding: 6px 9px;
+  font-size: 12px;
+}
+
+.composer-bridge-notice {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
 .segments {
   flex-wrap: wrap;
 }

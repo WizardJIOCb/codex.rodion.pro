@@ -9,3 +9,5 @@ data/
 apps/web/dist/
 apps/server/public/
 apps/agent-windows/agent.config.json
+apps/desktop-agent/src-tauri/target/
+dist-native/

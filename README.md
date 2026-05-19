@@ -42,6 +42,19 @@ pnpm --filter @cmc/agent-windows dev -- --config apps/agent-windows/agent.config
 
 Use `CMC_FAKE_RUNNER=1` to test live logs without running Codex.
 
+## Desktop Agent
+
+The native tray manager lives in `apps/desktop-agent`.
+
+```powershell
+.\start-native-agent.bat
+.\build-native-agent.bat
+pnpm --filter @cmc/desktop-agent dev
+pnpm --filter @cmc/desktop-agent tauri:dev
+```
+
+It manages the compact agent package in `%USERPROFILE%\codex-agent` by default, stores the agent token in the OS keychain, and starts the existing TypeScript agent as a fixed child process.
+
 ## VPS Deploy
 
 The app is designed to run behind Caddy:
