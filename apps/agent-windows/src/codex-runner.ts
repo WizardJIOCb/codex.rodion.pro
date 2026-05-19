@@ -191,6 +191,12 @@ export class Runner {
       this.child.on("close", async (exitCode) => {
         clearTimeout(timer);
         clearInterval(progressTimer);
+        context.sendProgress(progress(
+          context.job.id,
+          "finalizing",
+          "Collecting git diff and saving the result.",
+          await diffProgress(repo.path)
+        ));
         const gitStatus = await runCapture("git", ["-C", repo.path, "status", "--short"]);
         const gitDiffStat = await runCapture("git", ["-C", repo.path, "diff", "--stat"]);
         const gitDiff = await runCapture("git", ["-C", repo.path, "diff", "--", "."], undefined, 30000);

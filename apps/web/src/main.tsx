@@ -917,6 +917,48 @@ function isTerminalJobStatus(status: string) {
   return !["queued", "assigned", "running"].includes(status);
 }
 
+function jobProgressLabel(progress: JobProgress | null | undefined, fallback = "Выполняется") {
+  switch ((progress?.phase ?? "").toLowerCase()) {
+    case "queued":
+      return "В очереди";
+    case "assigned":
+      return "Назначено";
+    case "starting":
+      return "Запускаю Codex";
+    case "started":
+      return "Открываю thread";
+    case "thinking":
+      return "Codex пишет";
+    case "command":
+      return "Выполняю команду";
+    case "working":
+      return "Считаю diff";
+    case "message":
+      return "Получен ответ";
+    case "finalizing":
+      return "Сохраняю результат";
+    case "completed":
+      return "Синхронизирую";
+    case "failed":
+      return "Ошибка";
+    case "cancelled":
+      return "Остановлено";
+    default:
+      return fallback;
+  }
+}
+
+function jobProgressMessage(progress: JobProgress | null | undefined) {
+  const phase = (progress?.phase ?? "").toLowerCase();
+  const message = progress?.message?.trim() ?? "";
+  if (phase === "thinking") return "Жду ответ локального Codex";
+  if (phase === "working") return "Проверяю изменения в рабочей папке";
+  if (phase === "finalizing") return "Собираю git diff и сохраняю ответ в web";
+  if (phase === "completed") return "Финальный ответ получен, обновляю чат";
+  if (message) return message;
+  return "Задача ещё активна";
+}
+
 function isJobPromptMessage(message: ChatMessage, jobId: string) {
   return message.externalId === `job:${jobId}:prompt` || (message.role === "user" && messageJobId(message) === jobId);
 }
@@ -1507,11 +1549,14 @@ function App() {
 
   function renderChatThinkingIndicator() {
     if (!showChatThinkingIndicator) return null;
+    const label = activeRunBusy ? jobProgressLabel(activeProgress) : "Локальный Codex";
+    const message = activeRunBusy ? jobProgressMessage(activeProgress) : localActivity?.summary ?? "Локальный Codex сейчас занят";
     return (
       <article className="thinking-message" aria-live="polite">
         <div className="thinking-chip">
           <span className="thinking-spark" aria-hidden="true" />
-          <span>Thinking</span>
+          <span>{label}</span>
+          <em>{message}</em>
           <small>{formatDuration(thinkingSeconds)}</small>
         </div>
       </article>
@@ -3414,8 +3459,8 @@ function App() {
           <div className="progress-wrap">
             <div className="progress-panel">
               <div>
-                <span className="progress-label">{activeProgress.phase}</span>
-                <strong>{activeProgress.message}</strong>
+                <span className="progress-label">{jobProgressLabel(activeProgress)}</span>
+                <strong>{jobProgressMessage(activeProgress)}</strong>
               </div>
               <div className="progress-stats">
                 <span>{activeProgress.filesChanged ?? 0} files</span>
@@ -3529,7 +3574,7 @@ function App() {
           />
           <button className="run-button" disabled={runDisabled} type="submit">
             {showCodexBusy ? <RefreshCw className="spin" size={18} /> : <Play size={18} />}
-            {showCodexBusy ? `Codex занят ${formatDuration(thinkingSeconds)}` : "Отправить"}
+            {showCodexBusy ? `${activeRunBusy ? jobProgressLabel(activeProgress) : "Codex занят"} ${formatDuration(thinkingSeconds)}` : "Отправить"}
           </button>
           <label className="attachment-picker" htmlFor="composer-attachment-input" title="Attach files">
             <Paperclip size={18} />
