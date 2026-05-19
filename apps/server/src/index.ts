@@ -118,6 +118,8 @@ const chatSyncRequests = new Map<string, {
 }>();
 const STALE_JOB_GRACE_MS = 2 * 60 * 1000;
 
+db.prepare("UPDATE agents SET status = 'offline', current_job_id = NULL").run();
+
 function isAdmin(user: AuthUser): boolean {
   return user.role === "admin";
 }
@@ -428,20 +430,11 @@ function requestAgentVscode(
   });
 }
 
-function requestAgentChatSync(
+function startAgentChatSync(
   agentId: string,
   message: Extract<ServerToAgent, { type: "chat.sync.request" }>
-): Promise<Extract<AgentToServer, { type: "chat.sync.result" }>> {
-  const agent = agents.get(agentId);
-  if (!agent) return Promise.reject(new Error("agent_offline"));
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      chatSyncRequests.delete(message.requestId);
-      reject(new Error("agent_timeout"));
-    }, 45000);
-    chatSyncRequests.set(message.requestId, { resolve, reject, timer });
-    agent.send(message);
-  });
+): boolean {
+  return sendAgent(agentId, message);
 }
 
 function markAgentStatus(agentId: string, status: "online" | "offline"): void {
@@ -1635,7 +1628,18 @@ async function createApp(): Promise<FastifyInstance> {
     if (!auth) return;
     const rows = db.prepare(`SELECT id,user_id,name,hostname,os,agent_version,codex_version,git_version,codex_usage_json,local_activity_json,status,current_job_id,last_seen_at,created_at FROM agents ${agentAccessWhere(auth.user)} ORDER BY created_at`)
       .all(...agentAccessArgs(auth.user)) as AgentRow[];
-    return { agents: rows.map((row) => ({ ...row, codexUsage: parseCodexUsage(row.codex_usage_json), localActivity: freshLocalActivity(parseLocalActivity(row.local_activity_json), row.id) })) };
+    return {
+      agents: rows.map((row) => {
+        const online = agents.has(row.id);
+        return {
+          ...row,
+          status: online ? "online" : "offline",
+          current_job_id: online ? row.current_job_id : null,
+          codexUsage: parseCodexUsage(row.codex_usage_json),
+          localActivity: freshLocalActivity(parseLocalActivity(row.local_activity_json), row.id)
+        };
+      })
+    };
   });
 
   app.get("/api/repos", async (request, reply) => {
@@ -1875,16 +1879,12 @@ async function createApp(): Promise<FastifyInstance> {
     if (!auth || !requireCsrf(db, request, reply)) return;
     const { agentId } = request.params as { agentId: string };
     if (!canAccessAgent(auth.user, agentId)) return reply.code(404).send({ error: "agent_not_found" });
-    try {
-      const result = await requestAgentChatSync(agentId, {
-        type: "chat.sync.request",
-        requestId: id("req")
-      });
-      if (!result.ok) return reply.code(502).send({ error: result.error ?? "chat_sync_failed" });
-      return { ok: true, sent: result.sent ?? 0 };
-    } catch (error) {
-      return reply.code(503).send({ error: error instanceof Error ? error.message : "agent_error" });
-    }
+    const started = startAgentChatSync(agentId, {
+      type: "chat.sync.request",
+      requestId: id("req")
+    });
+    if (!started) return reply.code(503).send({ error: "agent_offline" });
+    return reply.code(202).send({ ok: true, accepted: true });
   });
 
   app.get("/api/chats", async (request, reply) => {

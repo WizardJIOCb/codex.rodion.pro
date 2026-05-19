@@ -1658,7 +1658,9 @@ function App() {
         setSyncNotice(data.error === "agent_offline" ? "Агент offline: синхронизация недоступна." : data.error || "Не получилось синхронизировать локальные чаты.");
         return;
       }
-      setSyncNotice(`Синхронизация прошла: агент отправил ${data.sent ?? 0} чатов.`);
+      setSyncNotice(data.accepted
+        ? "Синхронизация запущена: агент обновит локальные чаты."
+        : `Синхронизация прошла: агент отправил ${data.sent ?? 0} чатов.`);
       const refreshId = localChatSyncRefreshRef.current + 1;
       localChatSyncRefreshRef.current = refreshId;
       void refreshChatsAfterLocalSync(repo, refreshId).catch(() => undefined);
