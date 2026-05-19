@@ -54,7 +54,7 @@ function validateRequest(value: unknown): { ok: true; request: Required<Pick<Bri
 }
 
 function codexThreadUri(threadId: string): vscode.Uri {
-  return vscode.Uri.file(`/local/${threadId}`).with({ scheme: "openai-codex", authority: "extension" });
+  return vscode.Uri.file(`/local/${threadId}`).with({ scheme: "openai-codex", authority: "route" });
 }
 
 function isCodexThreadTab(tab: vscode.Tab, threadId: string): boolean {
@@ -62,7 +62,7 @@ function isCodexThreadTab(tab: vscode.Tab, threadId: string): boolean {
   if (!(input instanceof vscode.TabInputCustom)) return false;
   return input.viewType === "chatgpt.conversationEditor"
     && input.uri.scheme === "openai-codex"
-    && input.uri.authority === "extension"
+    && (input.uri.authority === "route" || input.uri.authority === "extension")
     && input.uri.path === `/local/${threadId}`;
 }
 
