@@ -417,6 +417,21 @@ function formatDuration(totalSeconds: number) {
   return `${remainingSeconds}s`;
 }
 
+function formatDateTime(value?: string | null) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false
+  });
+}
+
 function isPreviewableImage(mimeType: string) {
   return ["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/bmp"].includes(mimeType.toLowerCase());
 }
@@ -613,7 +628,7 @@ function messageRunDetails(message: ChatMessage, job: Job | undefined, collapsed
     speed ? `Speed ${SPEED_OPTIONS.find((option) => option.value === speed)?.label ?? speed}` : ""
   ].filter(Boolean);
   const timing = [
-    new Date(message.createdAt).toLocaleString(),
+    formatDateTime(message.createdAt),
     durationSeconds > 0 ? `Работал ${formatDuration(durationSeconds)}` : ""
   ].filter(Boolean);
   return { settings, timing };
@@ -2947,7 +2962,7 @@ function App() {
           <div>
             <h2>{displayName}</h2>
             <p>{currentUser?.email}</p>
-            <small><CalendarDays size={14} /> Registered {currentUser?.createdAt ? new Date(currentUser.createdAt).toLocaleString() : "unknown"}</small>
+            <small><CalendarDays size={14} /> Registered {formatDateTime(currentUser?.createdAt) || "unknown"}</small>
           </div>
         </section>
 
@@ -3091,7 +3106,7 @@ function App() {
   }
 
   function renderSync() {
-    const agentSeenAt = selectedAgent?.last_seen_at ? new Date(selectedAgent.last_seen_at).toLocaleString() : "";
+    const agentSeenAt = formatDateTime(selectedAgent?.last_seen_at);
     const repoKeyValue = syncRepo ? `${syncRepo.agentId}:${syncRepo.id}` : "";
     const agentReady = Boolean(selectedAgent && selectedAgent.status === "online");
     const repoReady = Boolean(syncRepo);
@@ -3413,7 +3428,7 @@ function App() {
                 <article className="run-trace-step" key={message.id}>
                   <div className="message-meta">
                     <span>Шаг {index + 1}</span>
-                    <small>{new Date(message.createdAt).toLocaleString()}</small>
+                    <small>{formatDateTime(message.createdAt)}</small>
                   </div>
                   {renderRichText(message.content, "rich-text message-body")}
                   {renderMessageAttachments(message.attachments, setImagePreview)}
@@ -3777,12 +3792,14 @@ function App() {
                         <form className="nav-new-chat" onSubmit={createChat}>
                           <input placeholder="New chat title" value={chatTitle} onChange={(event) => setChatTitle(event.target.value)} />
                           <button
+                            className="nav-sync-chat"
                             disabled={localChatSyncing || !online}
                             onClick={() => syncLocalChats(repo).catch(() => setChatNotice("Не получилось синхронизировать локальные чаты."))}
                             title="Синхронизировать локальные чаты Codex/VS Code"
                             type="button"
                           >
                             <RefreshCw className={localChatSyncing ? "spin" : ""} size={14} />
+                            <span>Sync</span>
                           </button>
                           <button disabled={busy || !chatTitle.trim()}><Plus size={14} /></button>
                         </form>
@@ -3802,7 +3819,7 @@ function App() {
                                 {chatIsBusy && <RefreshCw className="spin" size={13} />}
                                 <span>{chat.title}</span>
                               </span>
-                              <small>{new Date(chat.updatedAt).toLocaleString()}</small>
+                              <small>{formatDateTime(chat.updatedAt)}</small>
                             </button>
                               );
                             })()}
@@ -4097,13 +4114,13 @@ function App() {
                                   ) : message.role === "user" ? (
                                     <div className="message-author-stack">
                                       <span>{author}</span>
-                                      <small>{new Date(message.createdAt).toLocaleString()}</small>
+                                      <small>{formatDateTime(message.createdAt)}</small>
                                     </div>
                                   ) : (
                                     <>
                                       <span>{author}</span>
                                       <small>
-                                        {new Date(message.createdAt).toLocaleString()}
+                                        {formatDateTime(message.createdAt)}
                                         {collapsedRun && <> · Работал {formatDuration(collapsedRun.durationSeconds)}</>}
                                       </small>
                                     </>
@@ -4184,7 +4201,7 @@ function App() {
                 ? `${selectedAgent.codexUsage.remaining} of ${selectedAgent.codexUsage.limit} left`
                 : "Exact remaining limit is not exposed by Codex CLI."}
             </small>
-            {selectedAgent?.codexUsage?.checkedAt && <small>Checked {new Date(selectedAgent.codexUsage.checkedAt).toLocaleString()}</small>}
+            {selectedAgent?.codexUsage?.checkedAt && <small>Checked {formatDateTime(selectedAgent.codexUsage.checkedAt)}</small>}
           </div>
         </section>
 

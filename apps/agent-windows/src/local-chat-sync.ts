@@ -97,9 +97,9 @@ function readCodexChats(config: AgentConfig): LocalChat[] {
         repoId: repo.id,
         source: "codex" as const,
         externalId: row.id,
-        title: row.title || row.first_user_message || "Codex chat",
+        title: chatTitle([row.title, firstUserMessage(messages), row.first_user_message], "Codex chat"),
         cwd: cleanPath(row.cwd),
-        updatedAt: timeFromNumber(row.updated_at_ms ?? row.updated_at),
+        updatedAt: lastMessageAt(messages) ?? timeFromNumber(row.updated_at_ms ?? row.updated_at),
         messages
       }];
     });
@@ -282,7 +282,41 @@ function diffStatFromPatch(output: string): string[] {
 }
 
 function isCodexContextMessage(content: string): boolean {
-  return /^<(environment_context|permissions instructions|collaboration_mode|apps_instructions|skills_instructions|plugins_instructions)>/i.test(content.trim());
+  const normalized = content.trim();
+  return /^<(environment_context|permissions instructions|collaboration_mode|apps_instructions|skills_instructions|plugins_instructions)>/i.test(normalized)
+    || /^#?\s*AGENTS\.md instructions for\b/i.test(normalized)
+    || /^AGENTS\.md\s+Project rules\b/i.test(normalized)
+    || normalized.includes("<INSTRUCTIONS>");
+}
+
+function firstUserMessage(messages: ChatMessage[]): string | undefined {
+  return messages.find((message) => message.role === "user")?.content;
+}
+
+function lastMessageAt(messages: ChatMessage[]): string | undefined {
+  return [...messages].reverse().find((message) => message.createdAt)?.createdAt;
+}
+
+function chatTitle(candidates: Array<string | undefined | null>, fallback: string): string {
+  for (const candidate of candidates) {
+    const title = titleFromContent(candidate);
+    if (title) return title.slice(0, 300);
+  }
+  return fallback;
+}
+
+function titleFromContent(value: string | undefined | null): string | undefined {
+  if (!value) return undefined;
+  let content = cleanSyncedContent(value, []);
+  const requestMatch = content.match(/My request for Codex:\s*([\s\S]+)/i);
+  if (requestMatch?.[1]) content = requestMatch[1];
+  content = content
+    .replace(/<image>[\s\S]*?<\/image>/gi, "")
+    .replace(/<image\s*\/>/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!content || isCodexContextMessage(content) || /^# Context from my IDE setup:/i.test(content)) return undefined;
+  return content.slice(0, 120);
 }
 
 function readVsCodeChats(config: AgentConfig): LocalChat[] {

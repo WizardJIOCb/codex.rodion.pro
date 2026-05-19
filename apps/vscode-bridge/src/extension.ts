@@ -156,7 +156,30 @@ function textFromContent(value: unknown): string {
   }).join("\n").trim();
 }
 
-function readRolloutTitle(path: string): string | undefined {
+function isCodexContextMessage(content: string): boolean {
+  const normalized = content.trim();
+  return /^<(environment_context|permissions instructions|collaboration_mode|apps_instructions|skills_instructions|plugins_instructions)>/i.test(normalized)
+    || /^#?\s*AGENTS\.md instructions for\b/i.test(normalized)
+    || /^AGENTS\.md\s+Project rules\b/i.test(normalized)
+    || normalized.includes("<INSTRUCTIONS>");
+}
+
+function titleFromContent(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  let content = value
+    .replace(/<image>[\s\S]*?<\/image>/gi, "")
+    .replace(/<image\s*\/>/gi, "")
+    .trim();
+  const requestMatch = content.match(/My request for Codex:\s*([\s\S]+)/i);
+  if (requestMatch?.[1]) content = requestMatch[1];
+  content = content.replace(/\s+/g, " ").trim();
+  if (!content || isCodexContextMessage(content) || /^# Context from my IDE setup:/i.test(content)) return undefined;
+  return content.slice(0, 120);
+}
+
+function readRolloutSummary(path: string): { title?: string; updatedAt?: string } {
+  let title: string | undefined;
+  let updatedAt: string | undefined;
   try {
     const text = readFileSync(path, "utf8");
     for (const line of text.split(/\r?\n/)) {
@@ -167,14 +190,16 @@ function readRolloutTitle(path: string): string | undefined {
       } catch {
         continue;
       }
-      if (row.type !== "response_item" || row.payload?.type !== "message" || row.payload?.role !== "user") continue;
-      const content = textFromContent(row.payload.content).replace(/\s+/g, " ").trim();
-      if (content) return content.slice(0, 120);
+      if (typeof row.timestamp === "string") updatedAt = row.timestamp;
+      if (!title && row.type === "response_item" && row.payload?.type === "message" && row.payload?.role === "user") {
+        const content = textFromContent(row.payload.content).replace(/\s+/g, " ").trim();
+        title = titleFromContent(content);
+      }
     }
   } catch {
-    return undefined;
+    return {};
   }
-  return undefined;
+  return { title, updatedAt };
 }
 
 function readLocalCodexThreads(): CodexThread[] {
@@ -182,6 +207,7 @@ function readLocalCodexThreads(): CodexThread[] {
   return collectRolloutFiles(join(codexHome(), "sessions"))
     .map((rolloutPath) => {
       const id = threadIdFromRolloutPath(rolloutPath)!;
+      const rollout = readRolloutSummary(rolloutPath);
       let mtimeMs = 0;
       try {
         mtimeMs = statSync(rolloutPath).mtimeMs;
@@ -190,8 +216,8 @@ function readLocalCodexThreads(): CodexThread[] {
       }
       return {
         id,
-        title: titles.get(id) || readRolloutTitle(rolloutPath) || "Codex chat",
-        updatedAt: new Date(mtimeMs || 0).toISOString()
+        title: titleFromContent(titles.get(id)) || rollout.title || "Codex chat",
+        updatedAt: rollout.updatedAt || new Date(mtimeMs || 0).toISOString()
       };
     })
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
@@ -223,7 +249,7 @@ function webviewHtml(): string {
 </head>
 <body>
   <div class="toolbar">
-    <button id="refresh">Refresh</button>
+    <button id="refresh">Обновить</button>
     <button class="secondary" id="codex">Codex</button>
     <span class="status" id="status">Loading...</span>
   </div>
@@ -232,6 +258,19 @@ function webviewHtml(): string {
     const vscode = acquireVsCodeApi();
     const list = document.getElementById('list');
     const status = document.getElementById('status');
+    function formatDateTime(value) {
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return '';
+      return date.toLocaleString('ru-RU', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+      });
+    }
     document.getElementById('refresh').addEventListener('click', () => vscode.postMessage({ type: 'refresh' }));
     document.getElementById('codex').addEventListener('click', () => vscode.postMessage({ type: 'openSidebar' }));
     window.addEventListener('message', (event) => {
@@ -244,9 +283,9 @@ function webviewHtml(): string {
         if (!thread || typeof thread.id !== 'string') continue;
         const item = document.createElement('article');
         item.className = 'item';
-        item.innerHTML = '<div class="title"></div><div class="meta"></div><div class="actions"><button data-action="open">Open</button><button class="secondary" data-action="reopen">Reopen</button></div>';
+        item.innerHTML = '<div class="title"></div><div class="meta"></div><div class="actions"><button data-action="open">Открыть</button><button class="secondary" data-action="reopen">Переоткрыть</button></div>';
         item.querySelector('.title').textContent = String(thread.title || 'Codex chat');
-        item.querySelector('.meta').textContent = new Date(thread.updatedAt).toLocaleString();
+        item.querySelector('.meta').textContent = formatDateTime(thread.updatedAt);
         item.querySelector('[data-action="open"]').addEventListener('click', () => vscode.postMessage({ type: 'openThread', threadId: thread.id }));
         item.querySelector('[data-action="reopen"]').addEventListener('click', () => vscode.postMessage({ type: 'reopenThread', threadId: thread.id }));
         list.appendChild(item);
