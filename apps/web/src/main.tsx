@@ -1198,7 +1198,9 @@ function renderLogs(logs: Log[]) {
             <span>{line.stream}</span>
             <small>{new Date(line.at).toLocaleTimeString()}</small>
           </div>
-          {renderRichText(line.display, "rich-text compact")}
+          {line.stream === "system" ? (
+            <div className="system-log-body" title={line.display}>{line.display}</div>
+          ) : renderRichText(line.display, "rich-text compact")}
         </article>
       ))}
     </div>
